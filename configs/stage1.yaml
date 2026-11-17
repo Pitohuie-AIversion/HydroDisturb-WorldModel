@@ -1,0 +1,19 @@
+schema_version: stage1.v1
+normalizer_version: normalizer.v1
+latent_contract_version: latent.v1
+grid:
+  channels: [u, v, w, p, mask, sdf]
+  spatial_size: [64, 96, 192]
+  spacing: [1.0, 1.0, 1.0]
+  mask_threshold: 0.5
+  sdf_clip: 8.0
+model:
+  latent_channels: 256
+  downsample_factor: 8
+  hard_mask_output: true
+loss:
+  reconstruction_weight: 1.0
+  divergence_weight: 0.0
+  vorticity_weight: 0.0
+  temporal_weight: 0.0
+  probe_weight: 0.0
