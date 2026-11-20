@@ -1,0 +1,387 @@
+{
+  "schema_version": "flow3d.data.v1",
+  "config_path": "configs/flow3d/data.yaml",
+  "sources": {
+    "c04_benchmark_4frame_npz": {
+      "format": "c04_benchmark_npz",
+      "path": "D:\\📁 01_Workspaces (代码与工程区)\\HydroDisturb-Bench\\runs\\c04_s1_volume_sequence.npz",
+      "num_frames": 4,
+      "spatial_shape_zyx": [
+        64,
+        96,
+        192
+      ],
+      "dt_phys_s": 0.06000000238418579,
+      "dt_ctu": 0.10000000397364299,
+      "solid_cells": 13312,
+      "fluid_cells": 1166336,
+      "sdf_over_d_min": -0.45580607652664185,
+      "sdf_over_d_max": 9.90141487121582,
+      "supports_stage2_L4_window": false,
+      "physical_divergence_rms_s_inv": 0.10428537428379059,
+      "physical_divergence_mae_s_inv": 0.040845420211553574,
+      "boundary_diagnostics": {
+        "first_shell_cell_count": 3072,
+        "first_shell_normal_speed_rms": 0.05786378932663192,
+        "first_shell_tangential_speed_rms": 0.3875926158448957,
+        "first_shell_total_speed_rms": 0.39188806306485746,
+        "solid_interior_max_abs": 0.0,
+        "inlet_mean_u": 0.48316089876849827,
+        "outlet_mean_u": 0.4741956298967125,
+        "net_streamwise_flux_diff": -0.008965268871785781
+      },
+      "status": "VERIFIED_4FRAME_BENCHMARK"
+    },
+    "c04_shedding_82frame_dir": {
+      "format": "c04_shedding_npz_directory",
+      "path": "Z:\\E\\cfd_3d\\05_reports_viz\\video_c04_shedding",
+      "total_files": 82,
+      "unique_timestamp_files": 81,
+      "duplicate_timestamps": [
+        {
+          "time_s": 50.04,
+          "kept_file": "c04_vol_step_835.npz",
+          "dropped_duplicate_file": "c04_vol_t50.04.npz"
+        }
+      ],
+      "raw_shape_yzx": [
+        96,
+        64,
+        192
+      ],
+      "standardized_shape_zyx": [
+        64,
+        96,
+        192
+      ],
+      "velocity_channel_mapping": {
+        "X_u": "u",
+        "Y_v": "w_cross",
+        "Z_w": "v_span"
+      },
+      "solid_nan_count_per_frame": 12800,
+      "constant_dt_segments": [
+        {
+          "segment_id": "seg_0_dt0.24s",
+          "num_frames": 22,
+          "dt_phys_s": 0.24,
+          "t_start_s": 0.0,
+          "t_end_s": 5.04,
+          "max_rollout_from_L4": 18
+        },
+        {
+          "segment_id": "seg_1_dt0.96s",
+          "num_frames": 2,
+          "dt_phys_s": 0.96,
+          "t_start_s": 5.04,
+          "t_end_s": 6.0,
+          "max_rollout_from_L4": 0
+        },
+        {
+          "segment_id": "seg_2_dt1.02s",
+          "num_frames": 3,
+          "dt_phys_s": 1.02,
+          "t_start_s": 6.0,
+          "t_end_s": 8.04,
+          "max_rollout_from_L4": 0
+        },
+        {
+          "segment_id": "seg_3_dt0.96s",
+          "num_frames": 2,
+          "dt_phys_s": 0.96,
+          "t_start_s": 8.04,
+          "t_end_s": 9.0,
+          "max_rollout_from_L4": 0
+        },
+        {
+          "segment_id": "seg_4_dt1.02s",
+          "num_frames": 3,
+          "dt_phys_s": 1.02,
+          "t_start_s": 9.0,
+          "t_end_s": 11.04,
+          "max_rollout_from_L4": 0
+        },
+        {
+          "segment_id": "seg_5_dt0.96s",
+          "num_frames": 2,
+          "dt_phys_s": 0.96,
+          "t_start_s": 11.04,
+          "t_end_s": 12.0,
+          "max_rollout_from_L4": 0
+        },
+        {
+          "segment_id": "seg_6_dt1.02s",
+          "num_frames": 3,
+          "dt_phys_s": 1.02,
+          "t_start_s": 12.0,
+          "t_end_s": 14.04,
+          "max_rollout_from_L4": 0
+        },
+        {
+          "segment_id": "seg_7_dt0.96s",
+          "num_frames": 2,
+          "dt_phys_s": 0.96,
+          "t_start_s": 14.04,
+          "t_end_s": 15.0,
+          "max_rollout_from_L4": 0
+        },
+        {
+          "segment_id": "seg_8_dt1.02s",
+          "num_frames": 3,
+          "dt_phys_s": 1.02,
+          "t_start_s": 15.0,
+          "t_end_s": 17.04,
+          "max_rollout_from_L4": 0
+        },
+        {
+          "segment_id": "seg_9_dt0.96s",
+          "num_frames": 2,
+          "dt_phys_s": 0.96,
+          "t_start_s": 17.04,
+          "t_end_s": 18.0,
+          "max_rollout_from_L4": 0
+        },
+        {
+          "segment_id": "seg_10_dt1.02s",
+          "num_frames": 3,
+          "dt_phys_s": 1.02,
+          "t_start_s": 18.0,
+          "t_end_s": 20.04,
+          "max_rollout_from_L4": 0
+        },
+        {
+          "segment_id": "seg_11_dt1.98s",
+          "num_frames": 3,
+          "dt_phys_s": 1.98,
+          "t_start_s": 20.04,
+          "t_end_s": 24.0,
+          "max_rollout_from_L4": 0
+        },
+        {
+          "segment_id": "seg_12_dt2.04s",
+          "num_frames": 2,
+          "dt_phys_s": 2.04,
+          "t_start_s": 24.0,
+          "t_end_s": 26.04,
+          "max_rollout_from_L4": 0
+        },
+        {
+          "segment_id": "seg_13_dt1.98s",
+          "num_frames": 3,
+          "dt_phys_s": 1.98,
+          "t_start_s": 26.04,
+          "t_end_s": 30.0,
+          "max_rollout_from_L4": 0
+        },
+        {
+          "segment_id": "seg_14_dt2.04s",
+          "num_frames": 2,
+          "dt_phys_s": 2.04,
+          "t_start_s": 30.0,
+          "t_end_s": 32.04,
+          "max_rollout_from_L4": 0
+        },
+        {
+          "segment_id": "seg_15_dt1.98s",
+          "num_frames": 3,
+          "dt_phys_s": 1.98,
+          "t_start_s": 32.04,
+          "t_end_s": 36.0,
+          "max_rollout_from_L4": 0
+        },
+        {
+          "segment_id": "seg_16_dt2.04s",
+          "num_frames": 2,
+          "dt_phys_s": 2.04,
+          "t_start_s": 36.0,
+          "t_end_s": 38.04,
+          "max_rollout_from_L4": 0
+        },
+        {
+          "segment_id": "seg_17_dt1.98s",
+          "num_frames": 3,
+          "dt_phys_s": 1.98,
+          "t_start_s": 38.04,
+          "t_end_s": 42.0,
+          "max_rollout_from_L4": 0
+        },
+        {
+          "segment_id": "seg_18_dt2.04s",
+          "num_frames": 2,
+          "dt_phys_s": 2.04,
+          "t_start_s": 42.0,
+          "t_end_s": 44.04,
+          "max_rollout_from_L4": 0
+        },
+        {
+          "segment_id": "seg_19_dt1.98s",
+          "num_frames": 3,
+          "dt_phys_s": 1.98,
+          "t_start_s": 44.04,
+          "t_end_s": 48.0,
+          "max_rollout_from_L4": 0
+        },
+        {
+          "segment_id": "seg_20_dt2.04s",
+          "num_frames": 2,
+          "dt_phys_s": 2.04,
+          "t_start_s": 48.0,
+          "t_end_s": 50.04,
+          "max_rollout_from_L4": 0
+        },
+        {
+          "segment_id": "seg_21_dt0.12s",
+          "num_frames": 26,
+          "dt_phys_s": 0.12,
+          "t_start_s": 50.04,
+          "t_end_s": 53.04,
+          "max_rollout_from_L4": 22
+        },
+        {
+          "segment_id": "seg_22_dt0.96s",
+          "num_frames": 2,
+          "dt_phys_s": 0.96,
+          "t_start_s": 53.04,
+          "t_end_s": 54.0,
+          "max_rollout_from_L4": 0
+        },
+        {
+          "segment_id": "seg_23_dt2.04s",
+          "num_frames": 2,
+          "dt_phys_s": 2.04,
+          "t_start_s": 54.0,
+          "t_end_s": 56.04,
+          "max_rollout_from_L4": 0
+        },
+        {
+          "segment_id": "seg_24_dt1.98s",
+          "num_frames": 3,
+          "dt_phys_s": 1.98,
+          "t_start_s": 56.04,
+          "t_end_s": 60.0,
+          "max_rollout_from_L4": 0
+        }
+      ],
+      "longest_constant_dt_segment": {
+        "segment_id": "seg_21_dt0.12s",
+        "num_frames": 26,
+        "dt_phys_s": 0.12,
+        "max_rollout_from_L4": 22
+      },
+      "sample_b_stats_mean": [
+        0.4861106276512146,
+        -0.0002865478163585067,
+        0.00010877601016545668,
+        -4.752342700958252,
+        0.09950524568557739,
+        16.909120559692383
+      ]
+    },
+    "multi_re_world_model_h5_dir": {
+      "format": "world_model_multi_re_hdf5_manifest",
+      "path": "Z:\\E\\cfd_3d\\03_world_model_dataset",
+      "eligible_trajectory_count": 3,
+      "quarantined_count": 2,
+      "eligible_trajectories": [
+        {
+          "case_id": "re1m_wm_50steps",
+          "file_name": "re1m_wm_50steps.h5",
+          "reynolds_number": 1000000.0,
+          "u0_m_s": 3.963,
+          "num_steps": 50,
+          "max_rollout_from_L4": 46,
+          "dt_phys_mean_s": 0.01,
+          "dt_ctu_mean": 0.1321,
+          "raw_h5_channels": [
+            "u_star",
+            "v_cross_star",
+            "w_span_star",
+            "p_star",
+            "sdf_star",
+            "solid_mask"
+          ],
+          "requires_ch4_ch5_swap_and_mask_flip": true,
+          "tier1_limit_cycle_status": "UNSTABLE",
+          "status": "ELIGIBLE"
+        },
+        {
+          "case_id": "re200k_wm_50steps",
+          "file_name": "re200k_wm_50steps.h5",
+          "reynolds_number": 200000.0,
+          "u0_m_s": 0.7926,
+          "num_steps": 50,
+          "max_rollout_from_L4": 46,
+          "dt_phys_mean_s": 0.041,
+          "dt_ctu_mean": 0.108322,
+          "raw_h5_channels": [
+            "u_star",
+            "v_cross_star",
+            "w_span_star",
+            "p_star",
+            "sdf_star",
+            "solid_mask"
+          ],
+          "requires_ch4_ch5_swap_and_mask_flip": true,
+          "tier1_limit_cycle_status": "UNSTABLE",
+          "status": "ELIGIBLE"
+        },
+        {
+          "case_id": "re350k_wm_50steps",
+          "file_name": "re350k_wm_50steps.h5",
+          "reynolds_number": 349999.99999999994,
+          "u0_m_s": 1.38705,
+          "num_steps": 50,
+          "max_rollout_from_L4": 46,
+          "dt_phys_mean_s": 0.02,
+          "dt_ctu_mean": 0.09247,
+          "raw_h5_channels": [
+            "u_star",
+            "v_cross_star",
+            "w_span_star",
+            "p_star",
+            "sdf_star",
+            "solid_mask"
+          ],
+          "requires_ch4_ch5_swap_and_mask_flip": true,
+          "tier1_limit_cycle_status": "UNSTABLE",
+          "status": "ELIGIBLE"
+        }
+      ],
+      "quarantined_trajectories": [
+        {
+          "case_id": "re180k_mesh1_pilot",
+          "reason": "solver Re mismatch: nominal=180000.0 vs actual=126167.05",
+          "status": "QUARANTINED_SOLVER_MISMATCH"
+        },
+        {
+          "case_id": "c04_wm_25steps_golden",
+          "file_name": "c04_wm_25steps_golden.h5",
+          "reynolds_number": 126167.0,
+          "u0_m_s": 0.5,
+          "num_steps": 25,
+          "max_rollout_from_L4": 21,
+          "dt_phys_mean_s": 0.06,
+          "dt_ctu_mean": 0.1,
+          "raw_h5_channels": [
+            "u_star",
+            "v_cross_star",
+            "w_span_star",
+            "p_star",
+            "sdf_star",
+            "solid_mask"
+          ],
+          "requires_ch4_ch5_swap_and_mask_flip": true,
+          "tier1_limit_cycle_status": "UNSTABLE",
+          "quarantine_reasons": [
+            "ground_truth_verified is False in manifest.json",
+            "ground_truth_warning: h5_attrs(Re=126167.0,U0=0.5) != source_model summary (Re=5001.3,U0=0.01982) at E:\\codex_comsol_takeover\\20261113\\cpu_fill\\results\\re5k_mesh1_pilot\\B2_rtol5e4_max005",
+            "RAM-pool audit flagged synthetic rank-2 interpolation: c04_wm_25steps_golden.h5 (bit-exact match max_diff=0.0; synthetic rank-2 interpolation of slots 0..1)"
+          ],
+          "status": "QUARANTINED"
+        }
+      ],
+      "max_supported_rollout_horizon_from_L4": 46,
+      "h100_rollout_status": "BLOCKED_BY_50_STEP_TRAJECTORY_LENGTH (requires >=104 contiguous steps)"
+    }
+  }
+}

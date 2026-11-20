@@ -4,7 +4,7 @@ latent_contract_version: latent.v1
 grid:
   channels: [u, v, w, p, mask, sdf]
   spatial_size: [64, 96, 192]
-  spacing: [1.0, 1.0, 1.0]
+  spacing: [0.01875, 0.01875, 0.01875]
   mask_threshold: 0.5
   sdf_clip: 8.0
 model:

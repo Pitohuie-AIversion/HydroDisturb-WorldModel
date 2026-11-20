@@ -111,7 +111,11 @@ else:
             mask = torch.sigmoid(out[:, 4:5])
             sdf = torch.tanh(out[:, 5:6])
             if self.hard_mask_output:
-                fields = fields * (mask >= 0.5).to(fields.dtype)
+                if geometry is not None:
+                    known_fluid_mask = (geometry[:, 0:1] >= 0.5).to(fields.dtype)
+                    fields = fields * known_fluid_mask
+                else:
+                    fields = fields * (mask >= 0.5).to(fields.dtype)
             return torch.cat((fields, mask, sdf), dim=1)
 
 
@@ -127,7 +131,14 @@ else:
             return self.encoder(x)
 
         def decode(self, z: torch.Tensor, x_or_geometry: Optional[torch.Tensor] = None) -> torch.Tensor:
-            geometry = None if x_or_geometry is None else x_or_geometry[:, 4:6]
+            if x_or_geometry is None:
+                geometry = None
+            elif x_or_geometry.shape[1] == 2:
+                geometry = x_or_geometry
+            elif x_or_geometry.shape[1] >= 6:
+                geometry = x_or_geometry[:, 4:6]
+            else:
+                raise ValueError(f"expected 2-channel geometry or 6-channel input, got shape {tuple(x_or_geometry.shape)}")
             return self.decoder(z, geometry)
 
         def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:

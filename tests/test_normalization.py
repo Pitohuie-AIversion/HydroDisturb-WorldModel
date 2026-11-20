@@ -61,3 +61,36 @@ def test_batch_normalization_keeps_per_frame_statistics():
     expected[:, 5] = np.clip(expected[:, 5], -8, 8)
     expected[:, 4] = (expected[:, 4] > 0.5).astype(np.float32)
     assert np.allclose(restored, expected, atol=1e-5)
+
+
+def test_solid_nan_does_not_poison_stats_and_fluid_nan_raises():
+    normalizer = FlowNormalizer(eps=1e-6)
+    frame = sample_frame()
+    # Inject NaNs inside solid cells (mask == 0)
+    solid = frame[4] <= 0.5
+    frame[0, solid] = np.nan
+    frame[3, solid] = np.nan
+    normalized, stats = normalizer.normalize(frame)
+    assert np.all(np.isfinite(stats.as_array()))
+    assert np.all(np.isfinite(normalized))
+
+    # Inject NaN inside a fluid cell (mask == 1) -> must fail closed
+    bad = sample_frame()
+    bad[0, 1, 1, 1] = np.nan
+    try:
+        normalizer.fit(bad)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError when fluid cell contains NaN")
+
+
+def test_constant_field_applies_scale_floor_in_fit():
+    normalizer = FlowNormalizer(eps=1e-5)
+    frame = np.zeros((6, 3, 4, 5), dtype=np.float32)
+    frame[0] = 0.5
+    frame[3] = 10.0
+    frame[4] = 1.0
+    stats = normalizer.fit(frame)
+    assert stats.velocity_scale == 1e-5
+    assert stats.pressure_scale == 1e-5

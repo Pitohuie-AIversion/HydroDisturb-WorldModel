@@ -62,23 +62,25 @@ class FlowNormalizer:
         frame = self._validate(frame)
         if frame.ndim != 4:
             raise ValueError("fit expects one frame with shape (6,D,H,W); use fit_batch for (B,6,D,H,W)")
-        mask = frame[..., 4, :, :, :] if frame.ndim == 5 else np.take(frame, 4, axis=-4)
-        # The public API accepts C,D,H,W or B,C,D,H,W. Work with a broadcastable mask.
-        if frame.ndim == 4:
-            valid = mask > 0.5
-            spatial_axes = (-3, -2, -1)
-        else:
-            valid = mask > 0.5
-            spatial_axes = (-3, -2, -1)
-        w = valid.astype(np.float64)
-        denom = float(w.sum())
+        mask = np.take(frame, 4, axis=-4)
+        if not np.all(np.isfinite(mask)):
+            raise ValueError("fluid mask contains non-finite values")
+        valid = mask > 0.5
+        denom = float(valid.sum())
         if denom <= 0:
             raise ValueError("mask contains no fluid cells")
         vals = [np.take(frame, i, axis=-4).astype(np.float64) for i in range(4)]
-        means = [float((v * w).sum() / denom) for v in vals]
-        vel_sq = sum(((vals[i] - means[i]) ** 2) * w for i in range(3))
-        velocity_scale = float(np.sqrt(vel_sq.sum() / denom))
-        pressure_scale = float(np.sqrt((((vals[3] - means[3]) ** 2) * w).sum() / denom))
+        # Perform finite check on fluid cells BEFORE computing stats; never rely on NaN * 0.
+        fluid_vals = []
+        for idx, v in enumerate(vals):
+            fv = v[valid]
+            if not np.all(np.isfinite(fv)):
+                raise ValueError(f"channel {FLOW_CHANNELS[idx]} contains non-finite values inside fluid mask")
+            fluid_vals.append(fv)
+        means = [float(fv.mean()) for fv in fluid_vals]
+        vel_sq = sum((fluid_vals[i] - means[i]) ** 2 for i in range(3))
+        velocity_scale = max(float(np.sqrt(vel_sq.mean())), self.eps)
+        pressure_scale = max(float(np.sqrt(((fluid_vals[3] - means[3]) ** 2).mean())), self.eps)
         return NormalizationStats(*means, velocity_scale, pressure_scale, eps=self.eps, version=self.version)
 
     def fit_batch(self, frames: np.ndarray) -> list[NormalizationStats]:
@@ -95,11 +97,23 @@ class FlowNormalizer:
         out = frame.copy()
         vel_scale = max(float(stats.velocity_scale), self.eps)
         p_scale = max(float(stats.pressure_scale), self.eps)
+        valid = out[..., 4, :, :, :] > 0.5
+        for i in range(4):
+            ch = out[..., i, :, :, :]
+            if not np.all(np.isfinite(ch[valid])):
+                raise ValueError(f"channel {FLOW_CHANNELS[i]} contains non-finite values inside fluid mask")
+            # Scrub non-finite values inside masked-out solid cells so NaNs never enter Conv3d.
+            if not np.all(np.isfinite(ch)):
+                ch = np.where(np.isfinite(ch), ch, 0.0)
+                out[..., i, :, :, :] = ch
         for i, mean in enumerate((stats.mean_u, stats.mean_v, stats.mean_w)):
             out[..., i, :, :, :] = (out[..., i, :, :, :] - mean) / vel_scale
         out[..., 3, :, :, :] = (out[..., 3, :, :, :] - stats.mean_p) / p_scale
-        out[..., 4, :, :, :] = (out[..., 4, :, :, :] > 0.5).astype(np.float32)
-        out[..., 5, :, :, :] = np.clip(out[..., 5, :, :, :], -self.sdf_clip, self.sdf_clip) / self.sdf_clip
+        out[..., 4, :, :, :] = valid.astype(np.float32)
+        sdf = out[..., 5, :, :, :]
+        if not np.all(np.isfinite(sdf)):
+            raise ValueError("sdf channel contains non-finite values")
+        out[..., 5, :, :, :] = np.clip(sdf, -self.sdf_clip, self.sdf_clip) / self.sdf_clip
         return out, stats
 
     def normalize_batch(self, frames: np.ndarray, stats: list[NormalizationStats] | None = None) -> tuple[np.ndarray, list[NormalizationStats]]:

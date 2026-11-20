@@ -1,0 +1,13 @@
+schema_version: flow3d.data.v1
+tensor_layout: B,T,C,Z,Y,X
+spatial_shape_zyx: [64, 96, 192]
+spacing_zyx_m: [0.01875, 0.01875, 0.01875]
+cylinder_diameter_m: 0.3
+reference_density_kg_m3: 1025.8944
+reference_viscosity_m2_s: 0.0000011889
+scale_floor_uvw: 0.000001
+scale_floor_p: 0.000001
+sources:
+  c04_benchmark_4frame_npz: "D:/📁 01_Workspaces (代码与工程区)/HydroDisturb-Bench/runs/c04_s1_volume_sequence.npz"
+  c04_shedding_82frame_dir: "Z:/E/cfd_3d/05_reports_viz/video_c04_shedding"
+  multi_re_world_model_h5_dir: "Z:/E/cfd_3d/03_world_model_dataset"

@@ -54,7 +54,7 @@ class Stage1Trainer:
             pred = output["reconstruction"]
             mask = batch[:, 4:5].detach().ge(0.5).to(pred.dtype)
             rec = self._masked_mse(pred[:, :4], batch[:, :4], mask)
-            div = torch_divergence(pred[:, :3], batch[:, 4:5])
+            div = torch_divergence(pred[:, :3], batch[:, 4:5], spacing=self.config.grid.spacing)
             div_loss = div.square().mean()
             # z-vorticity is intentionally an opt-in placeholder until the exact
             # grid-axis convention is chosen for the training dataset.

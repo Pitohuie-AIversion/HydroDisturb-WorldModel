@@ -27,11 +27,17 @@ def torch_divergence(velocity, mask, spacing=(1.0, 1.0, 1.0)):
         return out
 
     # The simple valid mask uses neighboring fluid cells and zeroes boundaries.
+    # Layout is (B, 3, Z, Y, X) with velocity channels (u, v, w) along (X, Y, Z)
+    # and spacing = (dz, dy, dx).
     m = mask.ge(0.5).to(velocity.dtype)
-    valid_d = m.clone(); valid_d[:, :, 0] = 0; valid_d[:, :, -1] = 0
-    valid_h = m.clone(); valid_h[:, :, :, 0] = 0; valid_h[:, :, :, -1] = 0
-    valid_w = m.clone(); valid_w[:, :, :, :, 0] = 0; valid_w[:, :, :, :, -1] = 0
-    valid_d = valid_d * torch.roll(m, 1, -3) * torch.roll(m, -1, -3)
-    valid_h = valid_h * torch.roll(m, 1, -2) * torch.roll(m, -1, -2)
-    valid_w = valid_w * torch.roll(m, 1, -1) * torch.roll(m, -1, -1)
-    return diff(velocity[:, 0:1], -3, spacing[0]) * valid_d + diff(velocity[:, 1:2], -2, spacing[1]) * valid_h + diff(velocity[:, 2:3], -1, spacing[2]) * valid_w
+    valid_z = m.clone(); valid_z[:, :, 0] = 0; valid_z[:, :, -1] = 0
+    valid_y = m.clone(); valid_y[:, :, :, 0] = 0; valid_y[:, :, :, -1] = 0
+    valid_x = m.clone(); valid_x[:, :, :, :, 0] = 0; valid_x[:, :, :, :, -1] = 0
+    valid_z = valid_z * torch.roll(m, 1, -3) * torch.roll(m, -1, -3)
+    valid_y = valid_y * torch.roll(m, 1, -2) * torch.roll(m, -1, -2)
+    valid_x = valid_x * torch.roll(m, 1, -1) * torch.roll(m, -1, -1)
+    return (
+        diff(velocity[:, 0:1], -1, spacing[2]) * valid_x
+        + diff(velocity[:, 1:2], -2, spacing[1]) * valid_y
+        + diff(velocity[:, 2:3], -3, spacing[0]) * valid_z
+    )

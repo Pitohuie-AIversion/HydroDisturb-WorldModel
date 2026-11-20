@@ -32,10 +32,12 @@ class Stage1Autoencoder:
             )
         self.model = model
 
-    def latent_contract(self, latent_shape: tuple[int, int, int, int]) -> LatentContract:
+    def latent_contract(self, latent_shape: tuple[int, ...]) -> LatentContract:
+        layout = "B,T,C,Z,Y,X" if len(latent_shape) == 6 else ("B,C,Z,Y,X" if len(latent_shape) == 5 else "C,Z,Y,X")
         return LatentContract(
             version=self.config.latent_contract_version,
             shape=latent_shape,
+            layout=layout,
             normalizer_version=self.config.normalizer_version,
         )
 

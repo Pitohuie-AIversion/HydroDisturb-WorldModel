@@ -1,13 +1,68 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Mapping, Sequence
+
+
+def _parse_simple_yaml(text: str) -> dict[str, Any]:
+    """Minimal zero-dependency YAML parser for nested mapping + scalar/list configs."""
+    try:
+        import yaml  # type: ignore[import-untyped]
+        loaded = yaml.safe_load(text)
+        return dict(loaded) if isinstance(loaded, Mapping) else {}
+    except Exception:
+        pass
+
+    def _parse_scalar(val: str) -> Any:
+        val = val.strip()
+        if val.startswith("[") and val.endswith("]"):
+            inner = val[1:-1].strip()
+            if not inner:
+                return []
+            return [_parse_scalar(item) for item in inner.split(",")]
+        if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+            return val[1:-1]
+        low = val.lower()
+        if low == "true":
+            return True
+        if low == "false":
+            return False
+        if low in ("null", "none", "~"):
+            return None
+        try:
+            if "." in val or "e" in low:
+                return float(val)
+            return int(val)
+        except ValueError:
+            return val
+
+    root: dict[str, Any] = {}
+    stack: list[tuple[int, dict[str, Any]]] = [(-1, root)]
+    for raw_line in text.splitlines():
+        line = raw_line.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        key, _, rest = line.strip().partition(":")
+        key = key.strip()
+        rest = rest.strip()
+        while len(stack) > 1 and stack[-1][0] >= indent:
+            stack.pop()
+        parent = stack[-1][1]
+        if not rest:
+            child: dict[str, Any] = {}
+            parent[key] = child
+            stack.append((indent, child))
+        else:
+            parent[key] = _parse_scalar(rest)
+    return root
 
 
 @dataclass(frozen=True)
 class GridConfig:
     spatial_size: tuple[int, int, int] = (64, 96, 192)
-    spacing: tuple[float, float, float] = (1.0, 1.0, 1.0)
+    spacing: tuple[float, float, float] = (0.01875, 0.01875, 0.01875)
     mask_threshold: float = 0.5
     sdf_clip: float = 8.0
 
@@ -71,6 +126,11 @@ class Stage1Config:
             loss=loss,
         )
 
+    @classmethod
+    def from_yaml(cls, path: str | Path) -> "Stage1Config":
+        text = Path(path).read_text(encoding="utf-8")
+        return cls.from_mapping(_parse_simple_yaml(text))
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "schema_version": self.schema_version,
@@ -101,8 +161,8 @@ class Stage1Config:
 @dataclass(frozen=True)
 class LatentContract:
     version: str
-    shape: tuple[int, int, int, int]
-    layout: str = "B,C,D,H,W"
+    shape: tuple[int, ...]
+    layout: str = "B,T,C,Z,Y,X"
     source: str = "z_clean"
     normalizer_version: str = "normalizer.v1"
 
