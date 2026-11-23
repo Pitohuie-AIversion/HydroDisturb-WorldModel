@@ -64,6 +64,7 @@
 严格对齐设计文档第 B、C.2、D 节及 `src/flow3d/physics/operators.py` 的 `(Z, Y, X)` 轴序约定（$u$ 沿 $X$/axis `-1`，$v$ 沿 $Y$/axis `-2`，$w$ 沿 $Z$/axis `-3`，`spacing = (dz, dy, dx)`）：
 1. **PyTorch 相容离散算子（与 R1 `flow3d.physics.operators` 数值一致）**：
    - 实现可微分的 PyTorch 版 `centered_difference_3d_torch`、`div_h_torch`、`curl_h_torch`、`build_full_3d_stencil_mask_torch` 与 `valid_div_of_curl_mask_torch`，保证与 R1 NumPy 实现误差 $\le 10^{-5}$。
+   - **数值精度红线**：由于两级中心差分在小网格步长（如 C04 物理网格 $h=0.01875\,\text{m}$，$1/(2h)^2 \approx 711$）下会放大低精度舍入误差，所有有限差分算子在 AMP/BF16 下必须自动升精度至至少 `float32` 计算（不得直接在 `bf16/fp16` 下求差分），且支持 `float64` 精确核验。
 2. **Head-A：`DirectProjectionHead3D`（直接四场 + 可微离散投影 / 软散度约束）**：
    - 从解码器特征直接预测归一化四场 `[ũ, ṽ, w̃, p̃]`；
    - 提供可配置的离散散度处理模式：
@@ -85,7 +86,7 @@
 - 从 `z_clean [B, 256, Z_l, Y_l, X_l]` 经全局池化 + 轻量 MLP 预测无量纲拟能（enstrophy）标量与粗粒度 3D 能谱能量分箱（例如 8 个波数带），在 `stage1.yaml` 中通过 `probe.enabled: false` 默认关闭、随时可开。
 
 ### 2.6 `configs/flow3d/stage1.yaml`
-- 完整记录 R2 Stage 1 模型配置（`in_channels: 6`、`latent_channels: 256`、`downsample_factor: 8`、`base_channels`、`latent_norm`、`spatial_transformer` 参数、`head.type: head_a | head_b` 及两头子参数、`physical_readout`、`probe`）。
+- 完整记录 R2 Stage 1 模型与网格配置（`grid.spatial_shape_zyx: [64, 96, 192]`、`grid.spacing_zyx` 默认无量纲 `[0.0625, 0.0625, 0.0625]` 且前向/解码接口支持按 batch 覆盖为物理步长 `[0.01875, 0.01875, 0.01875]`、`in_channels: 6`、`latent_channels: 256`、`downsample_factor: 8`、`base_channels`、`latent_norm`、`spatial_transformer` 参数、`head.type: head_a | head_b` 及两头子参数、`physical_readout`、`probe`）。
 - **兼容性要求**：必须同时可被 `pyyaml` 与无依赖的 `flow3d.data.schema.load_yaml_or_json_config` 正确解析（使用嵌套映射和行内列表 `[...]`，避免块式 `- ` 列表）。
 
 ### 2.7 R2 单元测试与全尺寸显存/吞吐基准
@@ -95,7 +96,7 @@
    - **`Spatial Transformer ×1` 真实生效验证**：断言 `depth >= 1`（传入 `depth=0` 必须抛出 `ValueError` / `PhysicsContractError`）；验证注意力层与 FFN 层权重梯度均非零，且修改其参数确实改变 `z_clean`。
    - **物理算子相容性与 Head-A/B 解析无散场对照验证**：
      - 使用 `src/flow3d/data/fixtures.py` 生成解析无散场，验证 PyTorch 版 `div_h_torch / curl_h_torch` 与 R1 NumPy 版 `div_h / curl_h` 数值一致（max abs diff $\le 10^{-5}$）；
-     - 验证 Head-B 纯旋度分支输出在 `valid_div_of_curl_mask` 上满足 $\|\operatorname{div}_h(\tilde{\mathbf{u}}_{\text{curl}})\|_\infty \le 10^{-4}$ 且 `coulomb_gauge_loss` 有限可导；
+     - 验证 Head-B 纯旋度分支输出在 `valid_div_of_curl_mask` 上满足离散无散恒等式：`float64` 下 $\|\operatorname{div}_h(\tilde{\mathbf{u}}_{\text{curl}})\|_\infty \le 10^{-10}$，且在 `float32` 下满足步长归一化相对残差 $\|\operatorname{div}_h(\tilde{\mathbf{u}}_{\text{curl}})\|_\infty / (\max(\|\tilde{\mathbf{u}}_{\text{curl}}\|_\infty, 10^{-8}) / \min(h)) \le 10^{-4}$（或在单位/无量纲步长 `h >= 0.0625` 下绝对残差 $\le 10^{-4}$；避免在物理小步长 `h=0.01875 m` 的 FP32 下因 $1/(2h)^2 \approx 711$ 舍入放大造成误报），同时 `coulomb_gauge_loss` 有限可导；
      - 验证 Head-A 在启用离散散度投影后有效流体内部散度 RMS 相对投影前显著下降。
    - **`PhysicalReadout3D` 契约往返测试**：与 R1 `Flow3DNormalizer` 联测，验证标准归一化后的真实/合成场经 `PhysicalReadout3D` 还原后在有效流体域内误差 $\le 10^{-5}$。
    - **配置文件解析测试**：验证 `configs/flow3d/stage1.yaml` 可通过 `load_yaml_or_json_config` 加载并直接实例化 Head-A 与 Head-B 模型。

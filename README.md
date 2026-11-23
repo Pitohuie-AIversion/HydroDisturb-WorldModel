@@ -94,7 +94,7 @@ HydroDisturb-WorldModel/
         normalization.py                  # 逐帧有效流体域 6 维归一化（ddof=0, scale_floor）
         fixtures.py                       # 3D 解析无散场与合成测试 fixture
       physics/
-        operators.py                      # (Z,Y,X) 轴对齐 centered_difference, div_h, curl_h 与相容性核验
+        operators.py                      # (Z,Y,X) 轴对齐 centered_difference_3d, div_h, curl_h 与相容性核验
         boundary.py                       # 圆柱第一层流体壳层提取、法/切向速度与进出口通量检验
       cli/
         inspect_data.py                   # G0 命令行探针入口
@@ -132,11 +132,11 @@ from stage1.io.checkpoint import CheckpointContract, CheckpointManager
 contract = CheckpointContract(
     latent_layout="B,T,C,Z,Y,X",
     latent_shape=(256, 8, 12, 24),
-    normalizer_version="normalizer.v1",
+    normalizer_version="normalizer.flow3d.v1",  # 存量 stage1 兼容层使用 "normalizer.v1"
     dataset_manifest_sha256="<dataset-manifest-sha256>",
 )
 manager = CheckpointManager("checkpoints", contract=contract)
 manager.save_checkpoint(epoch, global_step, model, optimizer, scheduler, scaler, is_best=True)
 ```
 
-Stage 2 离线缓存应从已验证的 `z_clean` 导出，并用 `create_frozen_manifest(...)` 把权重哈希、契约哈希和数据清单哈希写入同一个 manifest。
+Stage 2 离线缓存应从已验证的 `z_clean` 导出，并用 `manager.create_frozen_manifest(...)` 把权重哈希、契约哈希和数据清单哈希写入同一个 manifest。

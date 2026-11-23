@@ -144,7 +144,7 @@ G3: Held-out rollout evaluation (H=10/20/45 on 50-step trajectories; H=50/100 wh
 HydroDisturb-WorldModel/
   docs/
     FlowWorld3D_V1_Development_Design.md
-    FlowWorld3D_AI_Coding_R1_Prompt.md    # R1 / G0 提示词（已完成 `f5dc000`）
+    FlowWorld3D_AI_Coding_R1_Prompt.md    # [已完成（f5dc000）] R1 / G0 提示词
     FlowWorld3D_AI_Coding_R2_Prompt.md    # R2 / G1 Stage 1 结构提示词（云端 GPU 下一阶段）
     g0_inspection_report.json             # [已完成（f5dc000）] 本机 3 套 3D 数据实测 G0 诊断报告
   src/
@@ -160,15 +160,16 @@ HydroDisturb-WorldModel/
         normalization.py        # [已完成（f5dc000）] 逐帧有效域 6 维统计 b（ddof=0、前置 isfinite、版本化 scale_floor、roundtrip）
         fixtures.py             # [已完成（f5dc000）] 3D 解析无散场（Taylor-Green / 3D 旋度势生成场）与小体积合成 fixture
       physics/                  # [已完成（f5dc000）]
-        operators.py            # [已完成（f5dc000）] (Z,Y,X) 轴对齐的 centered_difference、div_h、curl_h 及离散 div(curl_h)=0 相容性检验
+        operators.py            # [已完成（f5dc000）] (Z,Y,X) 轴对齐的 centered_difference_3d、div_h、curl_h 及离散 div(curl_h)=0 相容性检验
         boundary.py             # [已完成（f5dc000）] 圆柱近壁第一层流体点提取、法向/切向速度评估、进出口 BC 校验（拒绝把固体清零当无滑移）
       models/                   # [R2..R5 实现]
-        dc_ae3d.py              # 3D Stem + S2C/C2S 残差块 + 多尺度几何注入 + 独立 Decoder
-        spatial_transformer.py  # Spatial Transformer ×1 (8 heads, FFN 1024, PreLN, 3D SinCos/RoPE)
-        heads.py                # Head-A (Direct + Helmholtz/Leray Proj) & Head-B (Regularized A* -> Curl_h) + PhysicalReadout3D
-        probe.py                # LatentPhysicsProbe（可选消融：无量纲拟能与能谱探针）
-        conditions.py           # 5 槽位编码器（可插拔 StructuredPhysicsText / Frozen OpenCLIP + e_phys/e_step/e_action/e_regime）
-        dynamics.py             # Clean/Query 时空因果 Transformer（Mode-FM 含噪桥 & Mode-Res 一步残差 + history-only b_hat 头）
+        __init__.py             # [R2 实现] 可选 PyTorch 导出入口
+        dc_ae3d.py              # [R2 实现] 3D Stem + S2C/C2S 残差块 + 多尺度几何注入 + 独立 Decoder
+        spatial_transformer.py  # [R2 实现] Spatial Transformer ×1 (8 heads, FFN 1024, PreLN, 3D SinCos/RoPE)
+        heads.py                # [R2 实现] Head-A (Direct + Helmholtz/Leray Proj) & Head-B (Regularized A* -> Curl_h) + PhysicalReadout3D
+        probe.py                # [R2 实现] LatentPhysicsProbe（可选消融：无量纲拟能与能谱探针）
+        conditions.py           # [R4 实现] 5 槽位编码器（可插拔 StructuredPhysicsText / Frozen OpenCLIP + e_phys/e_step/e_action/e_regime）
+        dynamics.py             # [R5 实现] Clean/Query 时空因果 Transformer（Mode-FM 含噪桥 & Mode-Res 一步残差 + history-only b_hat 头）
       training/                 # [R3..R5 实现]
         stage1.py
         stage2.py
@@ -199,6 +200,10 @@ HydroDisturb-WorldModel/
       test_normalization.py     # [已完成（f5dc000）]
       test_axes_and_geometry.py # [已完成（f5dc000）]
       test_physics_operators.py # [已完成（f5dc000）]
+      test_stage1_models.py     # [R2 实现]
+  scripts/
+    smoke_stage1.py             # 存量 Stage 1 烟雾脚本
+    bench_stage1_flow3d.py      # [R2 实现] 64×96×192 Head-A/B 显存与吞吐基准
 ```
 
 ---
@@ -223,13 +228,21 @@ python -m pip install -e ".[dev]"
 python -m pytest tests/test_config.py tests/test_normalization.py tests/test_geometry_physics.py tests/test_npz_dataset.py tests/test_manifest.py tests/test_checkpoint.py -q
 ```
 
-### 2. R1（G0）新增必过验证命令
+### 2. R1（G0）已完成验证命令（本地纯 NumPy 环境）
 ```powershell
 python -m pytest tests/flow3d/test_contracts.py tests/flow3d/test_normalization.py -q
 python -m pytest tests/flow3d/test_axes_and_geometry.py tests/flow3d/test_physics_operators.py -q
 python -m pytest tests/flow3d -q
 python -m pytest tests -q
 python -m src.flow3d.cli.inspect_data --help
+```
+
+### 3. 云端 GPU 环境安装与 R2（G1 结构）验证命令
+```bash
+python -m pip install -e ".[all]"
+python -m pytest tests -q
+python -m pytest tests/flow3d/test_stage1_models.py -q
+python scripts/bench_stage1_flow3d.py --config configs/flow3d/stage1.yaml --device cuda --dtype bf16
 ```
 
 ---
