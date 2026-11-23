@@ -67,10 +67,11 @@ Stage 2: history L=4 (z, b) [with training context noise σ_ctx & history-length
            e_step (Δt_phys AND convective Δt* = Δt·U0/D)
            e_action (known disturbance schedule only)
            e_regime (strictly inferred from history L=4 only)
-     -> Causal Clean Track KV
-     -> Query Track Dynamics (Two Clean Modes without Algebraic Shortcut):
-        • Mode-FM (Stochastic Interpolant / Noisy-Source FM):
-          z_0 = z_t + σ_0 ε (or noisy bridge z_τ = (1-τ)z_t + τ z_{t+1} + σ_b√(τ(1-τ))ε), K_ODE ∈ {1..8}
+     -> Causal Clean Track KV (Factorized Space-Time Attention: 2304 spatial + L=4 temporal)
+     -> Query Track Dynamics (Unmasked Cross-Attention to Clean-KV; Two Modes without Algebraic Shortcut or Endpoint Singularity):
+        • Mode-FM (Bounded-Derivative Noisy-Source / Smooth-Bridge FM):
+          z_0 = z_t + σ_0 ε, z_τ = (1-τ)z_0 + τ z_{t+1} (v* = z_{t+1} - z_0), OR smooth quadratic bridge
+          γ(τ) = σ_b τ(1-τ) (γ̇(τ) = σ_b(1-2τ)) / decoupled (v, η) loss (FORBID direct ∂_τ√(τ(1-τ)) singularity!)
         • Mode-Res (K=1 Deterministic Residual / MeanFlow Baseline):
           ẑ_{t+1} = z_t + Δt* · v_θ(z_{t-3:t}, c) with 2..4 step pushforward rollout loss
      -> History-only b_hat head (positive scale parameterization + window-anchored damping option)
@@ -85,14 +86,23 @@ G3: Held-out rollout evaluation (H=10/20/45 on 50-step trajectories; H=50/100 wh
 
 ## C. 关键设计隐患修正说明（为什么这样改）
 
-1. **修正 Stage 2“无噪直线弦 Flow Matching”的代数恒等坍缩（P0 数学修正）**：
+1. **修正 Stage 2“无噪直线弦 Flow Matching”的代数恒等坍缩与棕色桥端点导数奇异性（P0 数学修正）**：
    - 原设计在训练时令 $z_\tau = (1-\tau)z_t + \tau z_{t+1}^{\text{true}}$ 且无随机噪声 $\varepsilon$，同时 $z_t$ 已在 `Clean Track` 历史中提供。对任意 $\tau \in (0, 1]$，目标速度存在平凡代数解 $v^* = z_{t+1}^{\text{true}} - z_t \equiv (z_\tau - z_t)/\tau$，导致网络可绕过物理学习直接拟合该恒等式，并在推理起点 $\tau=0, z_{\tau=0}=z_t$ 处遭遇 $0/0$ 奇异或退化为普通单步 $L_2$ 均值回归。
+   - 同时，若采用棕色桥 $\gamma(\tau) = \sigma_b\sqrt{\tau(1-\tau)}$ 并直接对 $z_\tau$ 求导作为速度目标，$\dot{\gamma}(\tau) = \sigma_b\frac{1-2\tau}{2\sqrt{\tau(1-\tau)}}$ 在 $\tau \to 0^+, 1^-$ 时发散至 $\pm\infty$，会直接引发训练 Loss 方差爆炸与 `NaN`（参见 *Albergo et al.* `arXiv:2303.08797`, *SiT* `arXiv:2401.08740`）。
    - **修正后规范**：
-     - **Mode-FM（随机桥 / 含噪源流匹配）**：训练与推理起点引入独立高斯噪声 $z_0 = z_t + \sigma_0 \varepsilon$（或随机桥 $z_\tau = (1-\tau)z_t + \tau z_{t+1}^{\text{true}} + \sigma_{\text{bridge}}\sqrt{\tau(1-\tau)}\,\varepsilon, \varepsilon \sim \mathcal{N}(0, I)$），彻底切断 $(z_\tau, z_t, \tau) \to z_{t+1}^{\text{true}}$ 的代数泄漏；
+     - **Mode-FM（有界导数含噪源 / 平滑随机桥流匹配）**：默认采用**含噪源直线流匹配** $z_0 = z_t + \sigma_0 \varepsilon,\ z_\tau = (1-\tau)z_0 + \tau z_{t+1}^{\text{true}}$（有界常速度目标 $v^* = z_{t+1}^{\text{true}} - z_0 = z_{t+1}^{\text{true}} - z_t - \sigma_0\varepsilon$），或采用**平滑二次桥** $\gamma(\tau) = \sigma_b \tau(1-\tau)$（有界导数 $\dot{\gamma}(\tau) = \sigma_b(1-2\tau)$）/ **解耦 $(v, \eta)$ 双目标损失**（严禁直接对 $\sqrt{\tau(1-\tau)}$ 求导回归）；
      - **Mode-Res（$K=1$ 确定性残差 / MeanFlow 基线）**：直接预测时间增量 $\hat{z}_{t+1} = z_t + \Delta t^* \cdot v_\theta(z_{t-3:t}, c)$ 并配合多步展开（Pushforward）损失，不做伪多步 ODE 循环。
-2. **修正多连通开放边界域上纯旋度头 $\tilde{\mathbf{u}} = \nabla \times \mathbf{A}^*$ 的 Hodge–Helmholtz 不完备性（P0 物理修正）**：
-   - 在含贯穿圆柱障碍物（第一 Betti 数 $b_1 = 1$）与开放进出口的有界三维域上，Hodge–Helmholtz 分解为 $\mathbf{u} = \nabla \times \mathbf{A} + \nabla \phi_{\text{harm}} + \mathbf{h}_{\text{circ}}$。纯局部旋度算子无法完备表达圆柱近壁势流偏转 $\nabla \phi_{\text{harm}} - \boldsymbol{\mu}$ 与环量模态，且同位中心差分 `curl_h` 在圆柱边界 1–2 层截断处并不满足离散无散，还存在奇偶棋盘格零空间与规范冗余 $\mathbf{A}^* \mapsto \mathbf{A}^* + \nabla \chi$。
-   - **修正后规范**：在 R2/R3 中将 **Head-A（直接四场 / 势流基流残差 + 可微离散 Helmholtz/Leray 投影或软散度约束）** 与 **Head-B（均值/势流分离 + 库仑规范正则 $\|\nabla \cdot \mathbf{A}^*\|^2$ 的相容离散 `Curl` 头）** 列为同级 A/B 候选，在 G1 凭真实 C04 近壁第一层误差、内部散度与能谱择优冻结。
+2. **修正多连通开放边界域上纯旋度头 $\tilde{\mathbf{u}} = \nabla \times \mathbf{A}^*$ 的 Hodge–Helmholtz 不完备性、近壁死区与第二层壳散度爆炸（P0 物理修正）**：
+   - 在含贯穿圆柱障碍物（第一 Betti 数 $b_1 = 1$）与开放进出口的有界三维域上，Hodge–Helmholtz 分解为 $\mathbf{u} = \nabla \times \mathbf{A} + \nabla \phi_{\text{harm}} + \mathbf{h}_{\text{circ}}$。
+   - **三项实测关键修正**：
+     1. **潜势求导传 `mask=None`**：因为 $\mathbf{A}^*$ 是神经网络自由预测的连续潜势（不含 CFD 固体 `NaN`），在 `curl_h_torch(A*, spacing_zyx, mask=None)` 中**不得传入 `fluid_mask` 截断导数**——否则不仅会把 100% 圆柱第一层流体壳（`3,072` 点）与 6 个外边界面（`71,912` 点，合计 `6.42%` 流体域）清零成常数 $\mathbf{u}_{\text{mean}}$，还会在圆柱第二层流体壳引发高达 $403\text{–}4481$ 的阶跃截断伪散度；传入 `mask=None` 后该处离散散度直接降至 $6.1\times 10^{-5}$（降幅 660 万倍），物理场仅在最终 `PhysicalReadout3D` 固体域内按 `fluid_mask` 掩码！
+     2. **势流分支必须加调和约束 $\|\Delta_h \phi\|^2$**：对 $\tilde{\mathbf{u}} = \operatorname{curl}_h(\mathbf{A}^*) + \nabla_h \phi + \mathbf{u}_{\text{mean}}$，由于 $\operatorname{div}(\nabla \phi) = \Delta \phi$，若无调和约束，网络会将任意有散误差倾倒进 $\nabla_h \phi$。因此开启 $\phi$ 分支时必须同步施加调和拉普拉斯正则 `harmonic_laplacian_loss`（有效内部域上 $\|\Delta_h \phi\|^2$）与库仑规范正则 `coulomb_gauge_loss`（$\|\operatorname{div}_h(\mathbf{A}^*)\|^2$）。
+     3. **Head-A 禁用周期 FFT 投影，主用 `soft_penalty`**：浸没圆柱与开放进出口域不满足周期对角 Fourier 投影条件（`arXiv:2610.07811`, `arXiv:2601.19368`），且在训练图内朴素展开多步 3D 掩码 CG 会爆显存并在 BF16/FP16 下发散；因此 Head-A 在训练期以 FP32 `soft_penalty`（掩码散度 + 第一层流体壳边界损失）为主，将有限步 FP32 掩码 Jacobi/CG 仅作为可选局部高频阻尼或推理后处理。
+3. **修正 Stage 2 注意力架构、小样本训练策略与云端环境/数据加载规范（P0/P1 工程修正）**：
+   - **Stage 2 注意力防 OOM**：严禁将 `[11525, 11525]` 自定义 2D 块因果掩码直接传入 PyTorch SDPA（FlashAttention-2 不支持任意 2D 掩码，静默回退 `MATH` O($N^2$) 路径在 12 层下仅注意力激活即达 `47.5 GiB/样本`）。R5 必须采用 **Factorized Space-Time Attention**（空间 `2,304` + 时间 `L=4`）且 `Clean Track` 独立编码历史 KV、`Query Track` 通过**无掩码 Cross-Attention** 读取历史 Clean-KV（天然因果且 100% 走 FlashAttention-2，注意力显存 `< 100 MB`）。
+   - **无量纲与有量纲单位换算规范**：对齐同级仓 `HydroDisturb-Bench/scripts/tier1_tier2_acceptance_pipeline.py` 上游定义，$u^*, v^*, w^* = u/U_0, v/U_0, w/U_0$，**$p^* = (p - p_\infty)/(\rho_0 U_0^2)$（分母不含 `0.5`）**，无量纲网格步长 $h^* = \Delta x / D = 1/16 = 0.0625$（物理辅助损失统一在无量纲步长 $h^* = 0.0625$ 下标定权重，避免切换 `0.01875 m` 时产生 $1/0.3^2 = 11.11\times$ 权重跳变；评测时通过 `flow3d.data.schema.denormalize_star_to_si` 统一还原为 `m/s` 与 `Pa`）。
+   - **3 条 50 步轨迹（150 帧）的定位与防过拟合机制**：当前 3 条合格多 Re 轨迹（`re200k`, `re350k`, `re1m`）在防泄漏切分下仅够支撑 **R2 结构验证与 R3 Stage 1 原型闭环**（R3 训练支持 **3D 随机子体块裁剪如 `32×48×64` + 展向 $Z$ 镜像对称增强 + `SDF/D` 裁剪 `[-8, 8]`** 防止整场死记）；正式 R3–R5 跨工况泛化与 G2/G3（`H=10/50/100`）验收须待补齐 $\ge 6\text{–}10$ 条、单条 $\ge 105\text{–}200$ 步稳定极限环轨迹后解锁。
+   - **云端 PyTorch / HDF5 硬护栏**：① 锁定 **PyTorch `2.5.1–2.8.0`**（避开 PyTorch `2.9.0/2.9.1+cu128/cu129` 的 `Conv3d` BF16 cuDNN 17.5× 显存暴涨与卡顿回归 `pytorch#166643/#166790/#168167`）；② 锁定 **`h5py>=3.14`**（兼容 `numpy>=2.0` 并包含 Linux `phil` 锁 fork 修复 `h5py#2584`），且多进程 `DataLoader` 强制 `multiprocessing_context="spawn"` + worker 内懒打开/即关 `h5py.File`；③ `src/stage1/io/checkpoint.py` 恢复 RNG 时强制 `.cpu()` 并容忍单/多卡设备数变化。
 3. **修正 Token 级无仿射 RMSNorm 对空间湍动能对比的抹杀（P1 架构修正）**：
    - 保持 `f8 / C=256`（$8\times 12\times 24 = 2,304$ tokens）以保障单卡 3D Spatial Transformer 显存可行，靠 S2C/C2S 残差捷径 + 空间梯度/涡量损失保留剪切层高频；
    - 潜空间瓶颈默认采用 **`GroupNorm` + 数据集级全局标量 RMS 缩放**（遵循 MIT Han Lab DC-AE Appendix D），将“逐空间位置无仿射 RMSNorm”作为 `stage1.yaml` 中可显式开关的消融项（`latent_norm: group_norm | dataset_rms | affine_free_rmsnorm`）。

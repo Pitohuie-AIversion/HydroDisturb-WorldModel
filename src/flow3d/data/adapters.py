@@ -12,7 +12,7 @@ import numpy as np
 
 from flow3d.contracts import Flow3DBatch, Flow3DConditions, PhysicsContractError, SampleProvenance
 from flow3d.data.normalization import Flow3DNormalizer
-from flow3d.data.schema import transpose_yzx_to_zyx_fields
+from flow3d.data.schema import convert_h5_6channel_to_field_and_geometry, transpose_yzx_to_zyx_fields
 
 
 @dataclass(frozen=True)
@@ -85,8 +85,11 @@ def load_c04_benchmark_npz(
     sdf_over_d = (sdf_m / diameter_m).astype(np.float32)
     geometry = np.stack([fluid_mask, sdf_over_d], axis=0)[None, ...]  # (1, 2, Z, Y, X)
 
-    normalizer = Flow3DNormalizer()
-    _, b_stats = normalizer.normalize(fields[None, ...], fluid_mask)
+    if normalize:
+        normalizer = Flow3DNormalizer()
+        _, b_stats = normalizer.normalize(fields[None, ...], fluid_mask)
+    else:
+        b_stats = None
     dt_s = float(np.mean(np.diff(times))) if times.size > 1 else 0.06
     u0_m_s = 0.5
     cond = Flow3DConditions(
@@ -228,12 +231,23 @@ def inspect_and_segment_c04_shedding_directory(
             w_cross_raw = np.asarray(d["w_cross"], dtype=np.float32)
             p_raw = np.asarray(d["p"], dtype=np.float32)
             frame_zyx = transpose_yzx_to_zyx_fields(u_raw, w_cross_raw, v_span_raw, p_raw)
-            nan_mask = ~np.isfinite(frame_zyx[0])
-            solid_nan_counts.append(int(nan_mask.sum()))
+            nan_mask_u = ~np.isfinite(frame_zyx[0])
+            solid_nan_counts.append(int(nan_mask_u.sum()))
             if fluid_mask_zyx is None:
-                fluid_mask_zyx = (~nan_mask).astype(np.float32)
-            # Scrub solid NaNs outside valid fluid mask
-            frame_zyx = np.where(np.isfinite(frame_zyx), frame_zyx, 0.0)
+                if reference_geometry_npz is not None and Path(reference_geometry_npz).exists():
+                    with np.load(reference_geometry_npz, allow_pickle=False) as ref_d:
+                        fluid_mask_zyx = (1.0 - (np.asarray(ref_d["solid_mask"]) > 0.5).astype(np.float32))
+                else:
+                    # Solid obstacle cells are simultaneously NaN across all 4 physical channels
+                    all_ch_nan = np.all(~np.isfinite(frame_zyx), axis=0)
+                    fluid_mask_zyx = (~all_ch_nan).astype(np.float32)
+            valid_fluid = fluid_mask_zyx > 0.5
+            # Strictly check finiteness inside valid fluid domain BEFORE scrubbing solid NaNs
+            if not np.all(np.isfinite(frame_zyx[:, valid_fluid])):
+                raise PhysicsContractError(
+                    f"shedding snapshot '{fname}' contains NaN/Inf inside the valid fluid domain"
+                )
+            frame_zyx[:, ~valid_fluid] = 0.0
             loaded_frames.append(frame_zyx)
 
     assert fluid_mask_zyx is not None
@@ -326,18 +340,25 @@ def inspect_world_model_dataset_manifest(
         if cid in str(ram_audit.get("slot_2_to_26_provenance", "")):
             reasons.append(f"RAM-pool audit flagged synthetic rank-2 interpolation: {ram_audit.get('slot_2_to_26_provenance')}")
 
-        # Physics consistency check Re ≈ |U0|*D/nu
-        try:
-            Flow3DConditions(
-                reynolds_number=re_val,
-                u0_m_s=u0_val,
-                diameter_m=d_val,
-                viscosity_m2_s=nu_val,
-                dt_phys_s=max(dt_phys, 1e-6),
-                dt_ctu=dt_ctu,
-            )
-        except PhysicsContractError as exc:
-            reasons.append(str(exc))
+        # Physics consistency check Re ≈ |U0|*D/nu and positive dt_phys / dt_ctu
+        if dt_phys <= 0 or not np.isfinite(dt_phys):
+            reasons.append(f"invalid non-positive dt_phys_mean_s: {dt_phys}")
+        else:
+            try:
+                Flow3DConditions(
+                    reynolds_number=re_val,
+                    u0_m_s=u0_val,
+                    diameter_m=d_val,
+                    viscosity_m2_s=nu_val,
+                    dt_phys_s=dt_phys,
+                    dt_ctu=dt_ctu if dt_ctu > 0 else None,
+                )
+            except PhysicsContractError as exc:
+                reasons.append(str(exc))
+
+        h5_fname = str(traj.get("file_name", ""))
+        h5_path = ddir / h5_fname if h5_fname else None
+        h5_exists = bool(h5_path is not None and h5_path.exists())
 
         t1_case = tier1_by_re.get(int(round(re_val)), {})
         t1_status = str(t1_case.get("status", "UNKNOWN"))
@@ -345,6 +366,7 @@ def inspect_world_model_dataset_manifest(
         record = {
             "case_id": cid,
             "file_name": traj.get("file_name"),
+            "file_exists_on_disk": h5_exists,
             "reynolds_number": re_val,
             "u0_m_s": u0_val,
             "num_steps": num_steps,
@@ -374,4 +396,112 @@ def inspect_world_model_dataset_manifest(
             (t["max_rollout_from_L4"] for t in eligible_trajectories), default=0
         ),
         "h100_rollout_status": "BLOCKED_BY_50_STEP_TRAJECTORY_LENGTH (requires >=104 contiguous steps)",
+    }
+
+
+def load_world_model_h5_trajectory(
+    h5_path: str | Path,
+    case_id: str = "re_multi_wm",
+    ancestor_id: str | None = None,
+    reynolds_number: float | None = None,
+    u0_m_s: float | None = None,
+    diameter_m: float = 0.3,
+    viscosity_m2_s: float = 1.1889e-6,
+    dt_phys_s: float = 0.02,
+    dt_ctu: float | None = None,
+    sdf_clip: float | None = 8.0,
+    check_rank_degeneracy: bool = True,
+    normalize: bool = True,
+) -> tuple[Flow3DBatch, dict[str, Any]]:
+    """Fork-safe HDF5 trajectory loader for `03_world_model_dataset/*.h5` (`h5py>=3.14`)."""
+    try:
+        import h5py  # type: ignore[import-untyped]
+    except ImportError as exc:
+        raise ImportError(
+            "load_world_model_h5_trajectory requires h5py>=3.14. Install with `pip install -e \".[data]\"`."
+        ) from exc
+
+    p = Path(h5_path)
+    if not p.exists():
+        raise FileNotFoundError(f"HDF5 trajectory file not found: {p}")
+
+    with h5py.File(p, "r") as f:
+        attrs = {k: (v.tolist() if hasattr(v, "tolist") else v) for k, v in f.attrs.items()}
+        if bool(attrs.get("ground_truth_verified", True)) is False:
+            raise PhysicsContractError(f"quarantined HDF5 file '{p.name}': ground_truth_verified is False")
+        tensor_key = None
+        for candidate in ("fields", "data", "frames", "tensor"):
+            if candidate in f and len(f[candidate].shape) == 5:
+                tensor_key = candidate
+                break
+        if tensor_key is None:
+            five_d = [k for k in f.keys() if hasattr(f[k], "shape") and len(f[k].shape) == 5]
+            if not five_d:
+                raise PhysicsContractError(f"no 5D (T, 6, Z, Y, X) dataset found in {p}; keys={list(f.keys())}")
+            tensor_key = five_d[0]
+        raw_t6zyx = np.asarray(f[tensor_key][...], dtype=np.float32)
+
+    field_t4zyx, geom_t2zyx = convert_h5_6channel_to_field_and_geometry(raw_t6zyx, sdf_clip=sdf_clip)
+    if check_rank_degeneracy:
+        is_degen, eff_rank = detect_temporal_rank_degeneracy(field_t4zyx)
+        if is_degen:
+            raise PhysicsContractError(
+                f"quarantined HDF5 trajectory '{p.name}': synthetic rank-{eff_rank} linear interpolation detected"
+            )
+    else:
+        eff_rank = int(field_t4zyx.shape[0])
+
+    geometry_1_2zyx = geom_t2zyx[0:1]
+    fluid_mask = geometry_1_2zyx[0, 0]
+    if normalize:
+        normalizer = Flow3DNormalizer()
+        _, b_stats = normalizer.normalize(field_t4zyx[None, ...], fluid_mask)
+    else:
+        b_stats = None
+
+    re_resolved = reynolds_number if reynolds_number is not None else (
+        float(attrs["reynolds_number"]) if "reynolds_number" in attrs else None
+    )
+    u0_resolved = u0_m_s if u0_m_s is not None else (
+        float(attrs["u0_m_s"]) if "u0_m_s" in attrs else None
+    )
+    cond = Flow3DConditions(
+        reynolds_number=re_resolved,
+        u0_m_s=u0_resolved,
+        diameter_m=diameter_m,
+        viscosity_m2_s=viscosity_m2_s,
+        dt_phys_s=dt_phys_s,
+        dt_ctu=dt_ctu,
+        text_prompt=f"3D cylinder wake Re={re_resolved}",
+    )
+    anc = ancestor_id or f"anc_{case_id}"
+    provs = tuple(
+        SampleProvenance(
+            case_id=case_id,
+            geometry_id="cylinder_3d_D0p3m",
+            trajectory_id=p.stem,
+            ancestor_id=anc,
+            segment_id="seg_0",
+            time_idx=t_idx,
+            time_phys_s=float(t_idx * dt_phys_s),
+            time_ctu=float(t_idx * cond.resolved_dt_ctu),
+            ground_truth_verified=True,
+        )
+        for t_idx in range(field_t4zyx.shape[0])
+    )
+    spacing_star = (0.0625, 0.0625, 0.0625)
+    batch = Flow3DBatch(
+        field=field_t4zyx[None, ...],
+        geometry=geometry_1_2zyx,
+        b=b_stats,
+        spacing=spacing_star,
+        conditions=(cond,),
+        provenance=provs,
+    )
+    return batch, {
+        "path": str(p),
+        "tensor_key": tensor_key,
+        "num_steps": int(field_t4zyx.shape[0]),
+        "effective_temporal_rank": eff_rank,
+        "spacing_star": list(spacing_star),
     }

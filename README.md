@@ -37,12 +37,20 @@
 
 ### 1. 云端 GPU 完整环境（推荐用于 R2+ 开发与训练）
 
+> **云端版本护栏**：请使用 **PyTorch `2.5.1–2.8.0`**（避开 PyTorch `2.9.0/2.9.1+cu128/cu129` 的 `Conv3d` BF16 cuDNN 显存与性能回归 `pytorch#166643/#166790/#168167`）与 **`h5py>=3.14`**（兼容 `numpy>=2.0` 且修复 Linux `fork` 死锁）。若云端镜像已预装匹配驱动的 CUDA PyTorch，建议用 `--no-deps` 安装本包以免覆盖预装 `torch`：
+
 ```bash
+# 若云端镜像已预装 CUDA PyTorch (2.5.1 ~ 2.8.x)：
+python -m pip install --no-deps -e .
+python -m pip install "h5py>=3.14" "pyyaml>=6.0" "pytest>=8"
+
+# 若为全新虚拟环境：
 python -m pip install -e ".[all]"
+
 python -m pytest tests -q
 ```
 
-其中 `.[all]` 包含 `torch>=2.2`、`h5py>=3.10`、`pyyaml>=6.0` 与 `pytest>=8`（也可按需单独安装 `.[torch]`、`.[data]`、`.[dev]`）。
+其中 `.[all]` 包含 `torch>=2.5.1,<2.9.0`、`h5py>=3.14`、`pyyaml>=6.0` 与 `pytest>=8`（也可按需单独安装 `.[torch]`、`.[data]`、`.[dev]`）。
 
 ### 2. 最小纯 NumPy 环境（验证 R0 + R1 契约与物理算子）
 

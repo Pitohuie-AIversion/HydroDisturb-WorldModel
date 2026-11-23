@@ -129,3 +129,36 @@ def test_detect_temporal_rank_degeneracy_catches_synthetic_linear_interpolation(
     genuine_seq = rng.randn(12, 4, 16, 16, 16).astype(np.float32)
     is_degen_real, rank_real = detect_temporal_rank_degeneracy(genuine_seq)
     assert not is_degen_real and rank_real > 2
+
+
+def test_dt_ctu_consistency_and_cross_split_ancestor_leakage_rejection():
+    # dt_phys=0.06, U0=0.5, D=0.3 -> expected dt_ctu = 0.1; passing dt_ctu=0.5 must raise
+    with pytest.raises(PhysicsContractError, match="dt_ctu consistency violation"):
+        Flow3DConditions(
+            reynolds_number=126167.05,
+            u0_m_s=0.5,
+            diameter_m=0.3,
+            viscosity_m2_s=1.1889e-6,
+            dt_phys_s=0.06,
+            dt_ctu=0.5,
+        )
+
+    # Splitting by trajectory_id when two trajectories share the same ancestor_id across splits must raise
+    shared_anc_provs = [
+        SampleProvenance(
+            case_id=f"c_{i}",
+            geometry_id="cyl_d0p3",
+            trajectory_id=f"traj_{i}",
+            ancestor_id="shared_anc_0" if i < 4 else "anc_other",
+        )
+        for i in range(5)
+    ]
+    with pytest.raises(PhysicsContractError, match="cross-split 'ancestor_id' leakage"):
+        group_split_by_provenance(shared_anc_provs, group_by="trajectory_id", ratios=(0.6, 0.2, 0.2))
+
+
+def test_inspect_data_cli_strict_mode_returns_nonzero_on_missing():
+    from flow3d.cli.inspect_data import main
+
+    exit_code = main(["--path", "nonexistent_missing_dataset_path.npz", "--strict"])
+    assert exit_code == 1

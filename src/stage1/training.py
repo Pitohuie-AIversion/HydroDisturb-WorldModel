@@ -37,7 +37,11 @@ class Stage1Trainer:
         )
         self.optimizer = optimizer or torch.optim.AdamW(self.model.parameters(), lr=2e-4, betas=(0.9, 0.95), weight_decay=1e-4)
         self.scheduler = None
-        self.scaler = torch.cuda.amp.GradScaler(enabled=torch.cuda.is_available())
+        amp_Creator = getattr(torch, "amp", None)
+        if amp_Creator is not None and hasattr(amp_Creator, "GradScaler"):
+            self.scaler = amp_Creator.GradScaler("cuda", enabled=torch.cuda.is_available())
+        else:
+            self.scaler = torch.cuda.amp.GradScaler(enabled=torch.cuda.is_available())
 
     @staticmethod
     def _masked_mse(pred, target, mask):
@@ -49,22 +53,32 @@ class Stage1Trainer:
             raise ValueError("batch must have shape (B,6,D,H,W)")
         self.model.train()
         self.optimizer.zero_grad(set_to_none=True)
-        with torch.autocast(device_type=batch.device.type, enabled=self.scaler.is_enabled()):
+        use_amp = bool(self.scaler.is_enabled() and getattr(batch, "is_cuda", False))
+        with torch.autocast(device_type=batch.device.type, enabled=use_amp):
             output = self.model(batch)
             pred = output["reconstruction"]
             mask = batch[:, 4:5].detach().ge(0.5).to(pred.dtype)
             rec = self._masked_mse(pred[:, :4], batch[:, :4], mask)
-            div = torch_divergence(pred[:, :3], batch[:, 4:5], spacing=self.config.grid.spacing)
-            div_loss = div.square().mean()
-            # z-vorticity is intentionally an opt-in placeholder until the exact
-            # grid-axis convention is chosen for the training dataset.
-            vort_loss = pred.new_zeros(())
-            loss = (
-                self.config.loss.reconstruction_weight * rec
-                + self.config.loss.divergence_weight * div_loss
-                + self.config.loss.vorticity_weight * vort_loss
-            )
-        self.scaler.scale(loss).backward()
-        self.scaler.step(self.optimizer)
-        self.scaler.update()
+        # Always compute finite-difference divergence in float32 outside autocast
+        # so small physical grid spacing (e.g. h=0.01875m -> 1/(2h)^2=711) never overflows fp16.
+        div = torch_divergence(
+            pred[:, :3].float(),
+            batch[:, 4:5].float(),
+            spacing=self.config.grid.spacing,
+        )
+        mask_f32 = mask.float()
+        div_loss = ((div.square() * mask_f32).sum() / mask_f32.sum().clamp_min(1.0)).to(rec.dtype)
+        vort_loss = pred.new_zeros(())
+        loss = (
+            self.config.loss.reconstruction_weight * rec
+            + self.config.loss.divergence_weight * div_loss
+            + self.config.loss.vorticity_weight * vort_loss
+        )
+        if use_amp:
+            self.scaler.scale(loss).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+        else:
+            loss.backward()
+            self.optimizer.step()
         return TrainStepResult(float(loss.detach()), float(rec.detach()), float(div_loss.detach()), float(vort_loss.detach()))

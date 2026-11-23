@@ -5,7 +5,12 @@ import pytest
 
 from flow3d.contracts import PhysicsContractError
 from flow3d.data.fixtures import make_cylinder_geometry_3d
-from flow3d.data.schema import convert_h5_6channel_to_field_and_geometry, transpose_yzx_to_zyx_fields
+from flow3d.data.schema import (
+    convert_h5_6channel_to_field_and_geometry,
+    denormalize_star_to_si,
+    normalize_si_to_star,
+    transpose_yzx_to_zyx_fields,
+)
 from flow3d.physics.boundary import evaluate_cylinder_boundary_conditions, first_fluid_shell_mask
 
 
@@ -73,3 +78,16 @@ def test_sdf_sign_convention_and_first_fluid_shell_boundary_diagnostics():
     diag = evaluate_cylinder_boundary_conditions(field, fluid_mask, sdf_over_d)
     assert diag.solid_interior_max_abs == 0.0
     assert diag.first_shell_total_speed_rms > 0.4  # non-zero speed on first fluid shell detected!
+
+
+def test_star_to_si_and_si_to_star_roundtrip_uses_rho_u0_squared():
+    rng = np.random.RandomState(2026)
+    f_star = rng.randn(2, 4, 4, 6, 8).astype(np.float32)
+    u0 = 0.5
+    rho0 = 1025.8944
+    f_si = denormalize_star_to_si(f_star, u0_m_s=u0, rho0_kg_m3=rho0, p_inf_pa=-10.0)
+    # Check velocity scaled by U0 and pressure scaled by rho0 * U0^2 (no 0.5 factor)
+    assert np.allclose(f_si[:, :3], f_star[:, :3] * u0, atol=1e-6)
+    assert np.allclose(f_si[:, 3], f_star[:, 3] * (rho0 * u0 ** 2) - 10.0, atol=1e-4)
+    restored = normalize_si_to_star(f_si, u0_m_s=u0, rho0_kg_m3=rho0, p_inf_pa=-10.0)
+    assert np.allclose(restored, f_star, atol=1e-5)

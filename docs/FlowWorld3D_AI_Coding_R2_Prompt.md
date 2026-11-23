@@ -13,11 +13,16 @@
 
 ## 1. 云端 GPU 环境与数据准备（执行前核对）
 
-1. **安装完整依赖（含 PyTorch、HDF5、PyYAML、Pytest）**：
-   ```bash
-   python -m pip install -e ".[all]"
-   python -c "import torch, h5py, yaml; print(torch.__version__, torch.cuda.is_available())"
-   ```
+1. **安装完整依赖（含 PyTorch 版本护栏、HDF5 3.14+、PyYAML、Pytest）**：
+   - **PyTorch 版本红线**：云端请使用 **PyTorch `2.5.1–2.8.0`**（或具备 cuDNN $\ge 9.15$ 的修复版），**严禁使用 PyTorch `2.9.0 / 2.9.1+cu128/cu129`**（官方已确认 `F.conv3d` 在 BF16 下存在 cuDNN 峰值显存暴涨 17.5 倍与 40 秒卡顿回归：`pytorch#166643`, `#166790`, `#168167`）。
+   - **保护云端镜像预装 CUDA PyTorch**：若云端容器已预装匹配宿主机驱动的 CUDA PyTorch（`2.5.1–2.8.x`），请优先采用不覆盖 `torch` 的安全安装命令：
+     ```bash
+     python -m pip install --no-deps -e .
+     python -m pip install "h5py>=3.14" "pyyaml>=6.0" "pytest>=8"
+     python -c "import torch, h5py, yaml; print('torch:', torch.__version__, 'cuda:', torch.cuda.is_available(), 'h5py:', h5py.__version__)"
+     ```
+     （仅在全新空虚拟环境中才使用 `python -m pip install -e ".[all]"`）。
+   - **Linux HDF5 多进程 DataLoader 红线**：后续构建 HDF5 `DataLoader`（`num_workers > 0`）时，必须设置 `multiprocessing_context="spawn"` 且在 worker 内按需短时打开并立即关闭 `h5py.File`（如同 `flow3d.data.adapters.load_world_model_h5_trajectory`），严禁在 `Dataset.__init__` 中持有打开的 `h5py.File` 跨 `fork` 传递；若挂载在云盘/NFS 上，需设置环境变量 `HDF5_USE_FILE_LOCKING=FALSE`。
 2. **云端数据配置与隔离红线**：
    - 如需在云端验证真实数据路径，请复制 [`configs/flow3d/data.cloud.example.yaml`](../configs/flow3d/data.cloud.example.yaml) 为 `configs/flow3d/data.cloud.yaml` 并修改 Linux 路径（不要覆盖本地 Windows 路径的 `configs/flow3d/data.yaml`）。
    - 仅允许使用 3 条经 G0 核验的多雷诺数 50 步轨迹：`re200k_wm_50steps.h5`、`re350k_wm_50steps.h5`、`re1m_wm_50steps.h5`（以及可选的 C04 4 帧基准 `c04_s1_volume_sequence.npz`）。
@@ -65,16 +70,16 @@
 1. **PyTorch 相容离散算子（与 R1 `flow3d.physics.operators` 数值一致）**：
    - 实现可微分的 PyTorch 版 `centered_difference_3d_torch`、`div_h_torch`、`curl_h_torch`、`build_full_3d_stencil_mask_torch` 与 `valid_div_of_curl_mask_torch`，保证与 R1 NumPy 实现误差 $\le 10^{-5}$。
    - **数值精度红线**：由于两级中心差分在小网格步长（如 C04 物理网格 $h=0.01875\,\text{m}$，$1/(2h)^2 \approx 711$）下会放大低精度舍入误差，所有有限差分算子在 AMP/BF16 下必须自动升精度至至少 `float32` 计算（不得直接在 `bf16/fp16` 下求差分），且支持 `float64` 精确核验。
-2. **Head-A：`DirectProjectionHead3D`（直接四场 + 可微离散投影 / 软散度约束）**：
+2. **Head-A：`DirectProjectionHead3D`（直接四场 + 软散度约束 / 有限步局部阻尼投影）**：
    - 从解码器特征直接预测归一化四场 `[ũ, ṽ, w̃, p̃]`；
    - 提供可配置的离散散度处理模式：
-     - `projection`：基于可微有限步 Jacobi / FFT / 泊松势修正步（或局部无散投影步）抑制有效流体内部散度；
-     - `soft_penalty`：直接输出四场并返回有效内部域上的 `div_loss` 供训练加权。
+     - `soft_penalty`（**Stage 1 训练默认主路径**）：直接输出四场，并在有效内部差分掩码 `build_full_3d_stencil_mask_torch(fluid_mask)` 上以 `float32` 计算 `div_loss`（禁止在含圆柱障碍物与开放进出口域上使用周期 FFT Leray 投影，也禁止在训练计算图中朴素展开 50–200 步 3D 掩码 CG 以免显存爆炸与 BF16 发散）；
+     - `projection`（**局部高频阻尼 / 推理后处理模式**）：通过少量固定步数（如 `num_steps=4..8`）的 `float32` 掩码 Jacobi 泊松修正步抑制局部高频散度，并返回投影前后的有效内部散度诊断。
    - 返回结构化输出字典（含 `norm_field`、`aux_losses` 字典及诊断量）。
-3. **Head-B：`RegularizedCurlHead3D`（均值/势流分离 + 库仑规范正则的相容离散 `Curl` 头）**：
+3. **Head-B：`RegularizedCurlHead3D`（无死区 `mask=None` 相容离散 `Curl` + 调和约束势流分离 + 库仑规范正则）**：
    - 针对圆柱多连通开放边界域（$b_1 = 1$）上的 Hodge–Helmholtz 分解 $\mathbf{u} = \nabla \times \mathbf{A}^* + \nabla \phi_{\text{harm}} + \mathbf{u}_{\text{mean}}$：
-     - 预测矢量势 $\mathbf{A}^* = [A_x^*, A_y^*, A_z^*]$，经相容离散 `curl_h_torch` 生成无散旋度分量 $\tilde{\mathbf{u}}_{\text{curl}}$；
-     - 并行预测低频均值/势流标量 $\phi$（梯度 $\nabla_h \phi$ 与空间全局/低频基流偏置），叠加构成完整速度场 $\tilde{\mathbf{u}}$（可开关纯旋度消融模式 `use_potential_branch: bool` 以便在解析无散场上直接验证 `div_h(curl_h(A*)) == 0`）；
+     - **关键红线 1（潜势求旋度必须传 `mask=None`）**：因为 $\mathbf{A}^* = [A_x^*, A_y^*, A_z^*]$ 是神经网络预测的连续潜势（不含 CFD 固体 `NaN`），调用 `curl_h_torch(A*, spacing_zyx, mask=None)` 时**严禁传入 `fluid_mask` 截断导数**！实测证实：若在 `curl_h_torch` 内传 `mask=fluid_mask`，不仅会将 100% 圆柱第一层流体壳（`3,072` 点）与 6 个外边界面（`71,912` 点，合计 `6.42%` 流体域）强制清零为常数，还会在圆柱第二层流体壳引发高达 $403\text{–}4481$ 的阶跃截断伪散度；传入 `mask=None`（边界处采用零梯度填充或单侧差分）可消除 6.42% 死区并将第二层壳离散散度骤降 660 万倍至 $6.1\times 10^{-5}$！固体区掩码仅在最终 `PhysicalReadout3D` 读出时施加。
+     - **关键红线 2（势流分支 $\phi$ 必须施加调和拉普拉斯约束 $\|\Delta_h \phi\|^2$）**：当开启势流修正分支（`use_potential_branch=True`）时，叠加 $\nabla_h \phi$（同样以 `mask=None` 求梯度）与全局/低频均值基流 $\mathbf{u}_{\text{mean}}$；由于 $\operatorname{div}(\nabla \phi) = \Delta \phi$，**必须同步计算并返回调和约束损失 `harmonic_laplacian_loss`（有效内部域上 $\|\Delta_h \phi\|^2 = \|\operatorname{div}_h(\nabla_h \phi)\|^2$ 均值）**，防止优化器将任意有散误差倾倒进 $\nabla_h \phi$ 分支！（默认保留 `use_potential_branch: bool` 开关以便直接验证纯旋度分支 `div_h(curl_h(A*)) == 0`）。
      - 独立分支预测归一化压力 $\tilde{p}$；
      - 计算并返回库仑规范正则项 `coulomb_gauge_loss`（有效内部域上 $\|\operatorname{div}_h(\mathbf{A}^*)\|^2$ 均值），消除规范冗余 $\mathbf{A}^* \mapsto \mathbf{A}^* + \nabla \chi$。
 4. **`PhysicalReadout3D`**：

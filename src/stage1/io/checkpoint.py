@@ -229,10 +229,19 @@ def restore_rng_state(state: Mapping[str, Any]) -> None:
     if state.get("numpy") is not None:
         _restore_numpy_rng(state["numpy"])
     if state.get("torch_cpu") is not None:
-        t.set_rng_state(state["torch_cpu"])
+        cpu_rng = state["torch_cpu"]
+        if hasattr(cpu_rng, "detach"):
+            cpu_rng = cpu_rng.detach().to(device="cpu", dtype=t.uint8)
+        t.set_rng_state(cpu_rng)
     cuda_state = state.get("torch_cuda")
     if cuda_state is not None and t.cuda.is_available():
-        t.cuda.set_rng_state_all(cuda_state)
+        num_devices = int(t.cuda.device_count())
+        seq = list(cuda_state) if isinstance(cuda_state, (list, tuple)) else [cuda_state]
+        for dev_idx in range(min(len(seq), num_devices)):
+            dev_rng = seq[dev_idx]
+            if hasattr(dev_rng, "detach"):
+                dev_rng = dev_rng.detach().to(device="cpu", dtype=t.uint8)
+            t.cuda.set_rng_state(dev_rng, device=dev_idx)
 
 
 def _fsync_directory(directory: Path) -> None:

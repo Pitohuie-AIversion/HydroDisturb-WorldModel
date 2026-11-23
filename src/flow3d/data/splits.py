@@ -87,6 +87,17 @@ def group_split_by_provenance(
     val_idx = tuple(i for g in val_g for i in group_to_indices[g])
     test_idx = tuple(i for g in test_g for i in group_to_indices[g])
 
+    # Enforce BOTH ancestor_id AND trajectory_id disjointness across splits
+    for attr in ("ancestor_id", "trajectory_id"):
+        tr_set = {getattr(provenances[i], attr) for i in train_idx}
+        va_set = {getattr(provenances[i], attr) for i in val_idx}
+        te_set = {getattr(provenances[i], attr) for i in test_idx}
+        overlap = (tr_set & va_set) | (tr_set & te_set) | (va_set & te_set)
+        if overlap:
+            raise PhysicsContractError(
+                f"cross-split '{attr}' leakage detected when splitting by '{group_by}': {sorted(overlap)}"
+            )
+
     return SplitAssignment(
         train_indices=train_idx,
         val_indices=val_idx,

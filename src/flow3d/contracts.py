@@ -130,6 +130,7 @@ class Flow3DConditions:
     known_mask: Mapping[str, bool] = field(default_factory=dict)
     valid_mask: Mapping[str, bool] = field(default_factory=dict)
     re_consistency_rtol: float = 0.01
+    dt_consistency_rtol: float = 0.05
     extra_metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -160,6 +161,19 @@ class Flow3DConditions:
                     f"Re consistency violation: declared Re={self.reynolds_number:.2f} vs "
                     f"|U0|*D/nu={re_computed:.2f} (rel_err={rel_err:.4f} > {self.re_consistency_rtol})"
                 )
+
+        # 3. Validate dt_ctu ≈ dt_phys_s * |U0| / D when both are provided
+        if self.dt_ctu is not None:
+            if self.dt_ctu <= 0 or not np.isfinite(self.dt_ctu):
+                raise PhysicsContractError("dt_ctu must be a positive finite float")
+            if self.u0_m_s is not None and abs(self.u0_m_s) > 0:
+                dt_ctu_expected = self.dt_phys_s * abs(self.u0_m_s) / self.diameter_m
+                dt_rel_err = abs(self.dt_ctu - dt_ctu_expected) / max(dt_ctu_expected, 1e-12)
+                if dt_rel_err > self.dt_consistency_rtol:
+                    raise PhysicsContractError(
+                        f"dt_ctu consistency violation: declared dt_ctu={self.dt_ctu:.6f} vs "
+                        f"dt_phys*|U0|/D={dt_ctu_expected:.6f} (rel_err={dt_rel_err:.4f} > {self.dt_consistency_rtol})"
+                    )
 
     @property
     def resolved_dt_ctu(self) -> float:

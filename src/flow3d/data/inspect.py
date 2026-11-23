@@ -13,7 +13,7 @@ from flow3d.data.adapters import (
 )
 from flow3d.data.schema import load_yaml_or_json_config
 from flow3d.physics.boundary import evaluate_cylinder_boundary_conditions
-from flow3d.physics.operators import div_h
+from flow3d.physics.operators import build_full_3d_stencil_mask, div_h
 
 
 def inspect_single_source(path: str | Path) -> dict[str, Any]:
@@ -28,10 +28,14 @@ def inspect_single_source(path: str | Path) -> dict[str, Any]:
         fluid_mask = batch.geometry[0, 0]
         sdf_over_d = batch.geometry[0, 1]
         div_field = div_h(f0[0], f0[1], f0[2], batch.spacing, mask=fluid_mask)
-        valid_cells = fluid_mask > 0.5
+        stencil_valid = build_full_3d_stencil_mask(fluid_mask) > 0.5
+        all_fluid = fluid_mask > 0.5
         bc_diag = evaluate_cylinder_boundary_conditions(f0, fluid_mask, sdf_over_d, batch.spacing)
-        summary["physical_divergence_rms_s_inv"] = float(np.sqrt(np.mean(div_field[valid_cells] ** 2)))
-        summary["physical_divergence_mae_s_inv"] = float(np.mean(np.abs(div_field[valid_cells])))
+        summary["stencil_valid_fluid_cells"] = int(stencil_valid.sum())
+        summary["physical_divergence_rms_s_inv"] = float(np.sqrt(np.mean(div_field[stencil_valid] ** 2)))
+        summary["physical_divergence_mae_s_inv"] = float(np.mean(np.abs(div_field[stencil_valid])))
+        summary["all_fluid_divergence_rms_s_inv"] = float(np.sqrt(np.mean(div_field[all_fluid] ** 2)))
+        summary["all_fluid_divergence_mae_s_inv"] = float(np.mean(np.abs(div_field[all_fluid])))
         summary["boundary_diagnostics"] = bc_diag.to_dict()
         summary["status"] = "VERIFIED_4FRAME_BENCHMARK"
         return summary

@@ -119,6 +119,7 @@ def transpose_yzx_to_zyx_fields(
 
 def convert_h5_6channel_to_field_and_geometry(
     h5_frame_6ch: np.ndarray,
+    sdf_clip: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Convert `03_world_model_dataset` 6-channel frame to (field[4,Z,Y,X], geometry[2,Z,Y,X]).
 
@@ -132,7 +133,54 @@ def convert_h5_6channel_to_field_and_geometry(
         raise PhysicsContractError(f"expected (..., 6, Z, Y, X) HDF5 tensor, got shape {arr.shape}")
     field = arr[..., :4, :, :, :].copy()
     sdf_star = arr[..., 4, :, :, :]
+    if sdf_clip is not None:
+        if sdf_clip <= 0:
+            raise PhysicsContractError("sdf_clip must be positive")
+        sdf_star = np.clip(sdf_star, -float(sdf_clip), float(sdf_clip))
     solid_mask = arr[..., 5, :, :, :]
     fluid_mask = (1.0 - (solid_mask > 0.5).astype(np.float32))
     geometry = np.stack([fluid_mask, sdf_star], axis=-4).astype(np.float32)
     return field, geometry
+
+
+def denormalize_star_to_si(
+    field_star_4ch: np.ndarray,
+    u0_m_s: float,
+    rho0_kg_m3: float = 1025.8944,
+    p_inf_pa: float = 0.0,
+) -> np.ndarray:
+    """Convert dimensionless `[u*, v*, w*, p*]` from `03_world_model_dataset` to SI `[m/s, Pa]`.
+
+    Matches upstream `HydroDisturb-Bench/scripts/tier1_tier2_acceptance_pipeline.py`:
+      - `u, v, w = u* * U0, v* * U0, w* * U0` (m/s)
+      - `p = p* * (rho0 * U0^2) + p_inf` (Pa; reference scale is `rho0 * U0^2`, NOT `0.5 * rho0 * U0^2`).
+    """
+    if u0_m_s <= 0 or rho0_kg_m3 <= 0:
+        raise PhysicsContractError("u0_m_s and rho0_kg_m3 must be positive")
+    f = np.asarray(field_star_4ch, dtype=np.float32)
+    if f.ndim < 4 or f.shape[-4] != 4:
+        raise PhysicsContractError(f"expected (..., 4, Z, Y, X) field_star_4ch, got {f.shape}")
+    out = f.copy()
+    out[..., :3, :, :, :] *= float(u0_m_s)
+    p_ref = float(rho0_kg_m3) * (float(u0_m_s) ** 2)
+    out[..., 3, :, :, :] = out[..., 3, :, :, :] * p_ref + float(p_inf_pa)
+    return out
+
+
+def normalize_si_to_star(
+    field_si_4ch: np.ndarray,
+    u0_m_s: float,
+    rho0_kg_m3: float = 1025.8944,
+    p_inf_pa: float = 0.0,
+) -> np.ndarray:
+    """Convert physical SI `[u, v, w, p]` (`m/s`, `Pa`) to dimensionless `[u*, v*, w*, p*]`."""
+    if u0_m_s <= 0 or rho0_kg_m3 <= 0:
+        raise PhysicsContractError("u0_m_s and rho0_kg_m3 must be positive")
+    f = np.asarray(field_si_4ch, dtype=np.float32)
+    if f.ndim < 4 or f.shape[-4] != 4:
+        raise PhysicsContractError(f"expected (..., 4, Z, Y, X) field_si_4ch, got {f.shape}")
+    out = f.copy()
+    out[..., :3, :, :, :] /= float(u0_m_s)
+    p_ref = float(rho0_kg_m3) * (float(u0_m_s) ** 2)
+    out[..., 3, :, :, :] = (out[..., 3, :, :, :] - float(p_inf_pa)) / p_ref
+    return out
