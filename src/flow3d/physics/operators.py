@@ -43,6 +43,7 @@ def centered_difference_3d(
     spacing: float,
     axis: int,
     valid_mask: np.ndarray | None = None,
+    edge_order1: bool = False,
 ) -> np.ndarray:
     if spacing <= 0 or not np.isfinite(spacing):
         raise PhysicsContractError(f"spacing must be a positive finite float, got {spacing}")
@@ -56,7 +57,15 @@ def centered_difference_3d(
     sl_r[axis] = slice(2, None)
     # Use safe finite values before subtraction so solid NaNs outside valid_mask do not leak
     x_safe = np.where(np.isfinite(x), x, 0.0)
-    out[tuple(sl_mid)] = (x_safe[tuple(sl_r)] - x_safe[tuple(sl_l)]) / (2.0 * float(spacing))
+    h = float(spacing)
+    out[tuple(sl_mid)] = (x_safe[tuple(sl_r)] - x_safe[tuple(sl_l)]) / (2.0 * h)
+    if edge_order1 and valid_mask is None and x.shape[axis] >= 2:
+        sl_0 = [slice(None)] * x.ndim; sl_0[axis] = 0
+        sl_1 = [slice(None)] * x.ndim; sl_1[axis] = 1
+        sl_m1 = [slice(None)] * x.ndim; sl_m1[axis] = -1
+        sl_m2 = [slice(None)] * x.ndim; sl_m2[axis] = -2
+        out[tuple(sl_0)] = (x_safe[tuple(sl_1)] - x_safe[tuple(sl_0)]) / h
+        out[tuple(sl_m1)] = (x_safe[tuple(sl_m1)] - x_safe[tuple(sl_m2)]) / h
     if valid_mask is not None:
         out *= np.asarray(valid_mask, dtype=np.float64)
     return out.astype(np.float32)
@@ -91,6 +100,7 @@ def curl_h(
     a_vec: np.ndarray,
     spacing_zyx: tuple[float, float, float],
     mask: np.ndarray | None = None,
+    edge_order1: bool = False,
 ) -> np.ndarray:
     """Compatible discrete curl `u = curl_h(A)` for `A = [Ax, Ay, Az]` on a `(..., 3, Z, Y, X)` grid.
 
@@ -110,12 +120,12 @@ def curl_h(
     az = a[..., 2, :, :, :]
     valid = build_full_3d_stencil_mask(mask) if mask is not None else None
 
-    daz_dy = centered_difference_3d(az, dy, -2, valid)
-    day_dz = centered_difference_3d(ay, dz, -3, valid)
-    dax_dz = centered_difference_3d(ax, dz, -3, valid)
-    daz_dx = centered_difference_3d(az, dx, -1, valid)
-    day_dx = centered_difference_3d(ay, dx, -1, valid)
-    dax_dy = centered_difference_3d(ax, dy, -2, valid)
+    daz_dy = centered_difference_3d(az, dy, -2, valid, edge_order1=edge_order1)
+    day_dz = centered_difference_3d(ay, dz, -3, valid, edge_order1=edge_order1)
+    dax_dz = centered_difference_3d(ax, dz, -3, valid, edge_order1=edge_order1)
+    daz_dx = centered_difference_3d(az, dx, -1, valid, edge_order1=edge_order1)
+    day_dx = centered_difference_3d(ay, dx, -1, valid, edge_order1=edge_order1)
+    dax_dy = centered_difference_3d(ax, dy, -2, valid, edge_order1=edge_order1)
 
     u = daz_dy - day_dz
     v = dax_dz - daz_dx

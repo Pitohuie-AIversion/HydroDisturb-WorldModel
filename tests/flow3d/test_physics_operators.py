@@ -57,3 +57,9 @@ def test_curl_h_and_div_h_follow_right_handed_xyz_physical_axes_in_zyx_storage()
     assert np.allclose(vel[0, 1:-1, 1:-1, 1:-1], 2.0, atol=1e-5)
     assert np.allclose(vel[1, 1:-1, 1:-1, 1:-1], 3.0, atol=1e-5)
     assert np.allclose(vel[2, 1:-1, 1:-1, 1:-1], 0.0, atol=1e-5)
+
+    # With edge_order1=True and mask=None, even the 6 outer domain boundary faces are exact!
+    vel_edge = curl_h(a_vec, (dz, dy, dx), mask=None, edge_order1=True)
+    assert np.allclose(vel_edge[0], 2.0, atol=1e-5)
+    assert np.allclose(vel_edge[1], 3.0, atol=1e-5)
+    assert np.allclose(vel_edge[2], 0.0, atol=1e-5)

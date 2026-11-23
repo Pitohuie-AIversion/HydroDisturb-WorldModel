@@ -18,8 +18,11 @@
       "sdf_over_d_min": -0.45580607652664185,
       "sdf_over_d_max": 9.90141487121582,
       "supports_stage2_L4_window": false,
-      "physical_divergence_rms_s_inv": 0.10428537428379059,
-      "physical_divergence_mae_s_inv": 0.040845420211553574,
+      "stencil_valid_fluid_cells": 1091448,
+      "physical_divergence_rms_s_inv": 0.10780370980501175,
+      "physical_divergence_mae_s_inv": 0.04364796355366707,
+      "all_fluid_divergence_rms_s_inv": 0.10428537428379059,
+      "all_fluid_divergence_mae_s_inv": 0.040845420211553574,
       "boundary_diagnostics": {
         "first_shell_cell_count": 3072,
         "first_shell_normal_speed_rms": 0.05786378932663192,
