@@ -11,7 +11,9 @@ dependencies = ["numpy>=1.24"]
 
 [project.optional-dependencies]
 torch = ["torch>=2.2"]
+data = ["h5py>=3.10", "pyyaml>=6.0"]
 dev = ["pytest>=8"]
+all = ["torch>=2.2", "h5py>=3.10", "pyyaml>=6.0", "pytest>=8"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

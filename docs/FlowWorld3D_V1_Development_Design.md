@@ -1,6 +1,6 @@
 # FlowWorld-3D V1.3（路线 A 修订版）：三维流场时空世界模型 AI Coding 工程设计
 
-> **主仓库绑定（路线 A）**：`D:\📁 01_Workspaces (代码与工程区)\HydroDisturb-WorldModel`（Git 远端：`Pitohuie-AIversion/HydroDisturb-WorldModel.git`，基准提交：`15aa63b`），服务于同级基准仓 `D:\📁 01_Workspaces (代码与工程区)\HydroDisturb-Bench`（C04 三维高雷诺数圆柱绕流基准）。
+> **主仓库绑定（路线 A）**：`D:\📁 01_Workspaces (代码与工程区)\HydroDisturb-WorldModel`（Git 远端：`Pitohuie-AIversion/HydroDisturb-WorldModel.git`，已完成 R1 / G0 基线提交：`f5dc000`，初始骨架提交：`15aa63b`），服务于同级基准仓 `D:\📁 01_Workspaces (代码与工程区)\HydroDisturb-Bench`（C04 三维高雷诺数圆柱绕流基准）。
 > **修订说明**：本版本对齐路线 A，消除原 `Design.md` 与 `R1_Prompt.md` 的 8 处内部口径漂移，接入本机实测的 3 套三维 CFD 数据源契约，并修正了原路线中的 6 项数学、物理与自回归动力学隐患。
 
 ---
@@ -144,22 +144,24 @@ G3: Held-out rollout evaluation (H=10/20/45 on 50-step trajectories; H=50/100 wh
 HydroDisturb-WorldModel/
   docs/
     FlowWorld3D_V1_Development_Design.md
-    FlowWorld3D_AI_Coding_R1_Prompt.md
+    FlowWorld3D_AI_Coding_R1_Prompt.md    # R1 / G0 提示词（已完成 `f5dc000`）
+    FlowWorld3D_AI_Coding_R2_Prompt.md    # R2 / G1 Stage 1 结构提示词（云端 GPU 下一阶段）
+    g0_inspection_report.json             # [已完成（f5dc000）] 本机 3 套 3D 数据实测 G0 诊断报告
   src/
     stage1/                     # 既有 V1 基础层（保留原子 io/checkpoint.py 及既有 16+ 单测兼容）
     flow3d/                     # V1.3 正式三维主命名空间（按 R1..R5 分轮增量创建，禁止提交空文件）
-      __init__.py
-      contracts.py              # StateSpec3D, CYLINDER3D_STATE_SPEC, Flow3DBatch, 条件与来源强类型契约
-      data/
-        schema.py               # ZYX<->XYZ 映射、dx/dy/dz、SDF/D、SampleProvenance、Re 一致性校验
-        inspect.py              # 真实 3D 数据探针（支持 C04 NPZ / shedding NPZ 目录 / Multi-Re HDF5 + 伪数据隔离）
-        adapters.py             # 显式格式载入器（处理 (96,64,192) 转置、w_cross/v_span 映射、h5 通道重排、固体 NaN 清洗）
-        splits.py               # ancestor_id/trajectory_id 优先分组 + 单轨迹连续时间段（带 purge gap）双模式防泄漏切分
-        normalization.py        # 逐帧有效域 6 维统计 b（ddof=0、前置 isfinite、版本化 scale_floor、roundtrip）
-        fixtures.py             # 3D 解析无散场（Taylor-Green / 3D 旋度势生成场）与小体积合成 fixture
-      physics/
-        operators.py            # (Z,Y,X) 轴对齐的 centered_difference、div_h、curl_h 及离散 div(curl_h)=0 相容性检验
-        boundary.py             # 圆柱近壁第一层流体点提取、法向/切向速度评估、进出口 BC 校验（拒绝把固体清零当无滑移）
+      __init__.py               # [已完成（f5dc000）]
+      contracts.py              # [已完成（f5dc000）] StateSpec3D, CYLINDER3D_STATE_SPEC, Flow3DBatch, 条件与来源强类型契约
+      data/                     # [已完成（f5dc000）]
+        schema.py               # [已完成（f5dc000）] ZYX<->XYZ 映射、dx/dy/dz、SDF/D、SampleProvenance、Re 一致性校验
+        inspect.py              # [已完成（f5dc000）] 真实 3D 数据探针（支持 C04 NPZ / shedding NPZ 目录 / Multi-Re HDF5 + 伪数据隔离）
+        adapters.py             # [已完成（f5dc000）] 显式格式载入器（处理 (96,64,192) 转置、w_cross/v_span 映射、h5 通道重排、固体 NaN 清洗）
+        splits.py               # [已完成（f5dc000）] ancestor_id/trajectory_id 优先分组 + 单轨迹连续时间段（带 purge gap）双模式防泄漏切分
+        normalization.py        # [已完成（f5dc000）] 逐帧有效域 6 维统计 b（ddof=0、前置 isfinite、版本化 scale_floor、roundtrip）
+        fixtures.py             # [已完成（f5dc000）] 3D 解析无散场（Taylor-Green / 3D 旋度势生成场）与小体积合成 fixture
+      physics/                  # [已完成（f5dc000）]
+        operators.py            # [已完成（f5dc000）] (Z,Y,X) 轴对齐的 centered_difference、div_h、curl_h 及离散 div(curl_h)=0 相容性检验
+        boundary.py             # [已完成（f5dc000）] 圆柱近壁第一层流体点提取、法向/切向速度评估、进出口 BC 校验（拒绝把固体清零当无滑移）
       models/                   # [R2..R5 实现]
         dc_ae3d.py              # 3D Stem + S2C/C2S 残差块 + 多尺度几何注入 + 独立 Decoder
         spatial_transformer.py  # Spatial Transformer ×1 (8 heads, FFN 1024, PreLN, 3D SinCos/RoPE)
@@ -177,7 +179,7 @@ HydroDisturb-WorldModel/
         reconstruction.py       # 严格分开报告速度 (m/s) 与压力 (Pa) 的 MAE/RMSE/Rel-L2、近壁误差、散度与能谱
         rollout.py
       cli/
-        inspect_data.py         # [R1 实现] 命令行数据探针与 G0 诊断报告导出
+        inspect_data.py         # [已完成（f5dc000）] 命令行数据探针与 G0 诊断报告导出
         train_stage1.py         # [R3 实现]
         validate_stage1.py      # [R3 实现]
         build_cache.py          # [R3 实现]
@@ -186,29 +188,30 @@ HydroDisturb-WorldModel/
   configs/
     stage1.yaml                 # 既有配置（保留）
     flow3d/
-      data.yaml                 # [R1 实现] 三维网格、物理常数、3 套本地数据源路径与隔离规则
+      data.yaml                 # [已完成（f5dc000）] 三维网格、物理常数、3 套本地数据源路径与隔离规则
+      data.cloud.example.yaml   # 云端 Linux 数据路径模板与多雷诺数 .h5 上传/隔离白名单说明
       stage1.yaml               # [R2/R3 实现]
       stage2.yaml               # [R4/R5 实现]
   tests/
     test_*.py                   # 既有 6 个测试文件（必须保持 100% 通过）
     flow3d/
-      test_contracts.py         # [R1 实现]
-      test_normalization.py     # [R1 实现]
-      test_axes_and_geometry.py # [R1 实现]
-      test_physics_operators.py # [R1 实现]
+      test_contracts.py         # [已完成（f5dc000）]
+      test_normalization.py     # [已完成（f5dc000）]
+      test_axes_and_geometry.py # [已完成（f5dc000）]
+      test_physics_operators.py # [已完成（f5dc000）]
 ```
 
 ---
 
 ## F. 分轮 AI Coding 计划与验收门槛
 
-| 轮次 | 范围 | 关键输出 | 必须通过的验收门槛 |
-| :--- | :--- | :--- | :--- |
-| **R1 · G0** | `src/flow3d/` 契约、数据探针、3 套真实数据源适配器、防泄漏切分、逐帧 6 维归一化、相容 `div_h/curl_h` 与真实壁面 BC、`cli/inspect_data.py` | 本机 3 套 3D 数据实测 G0 报告（含自动隔离 `c04_wm_25steps_golden.h5` 与 `re180k`）；`tests/flow3d/` 4 套单测 | 归一化往返误差 $\le 10^{-5}$；有效内部域 `div_h(curl_h(A)) == 0` 解析测试通过；固体 `NaN` 不污染统计；流体 `NaN` 与 $Re$ 错配必拦截；既有 `tests/test_*.py` 零回归 |
-| **R2 · G1 结构** | 3D DC-AE (`S2C/C2S`) + `Spatial Transformer ×1` + 可配置 Latent Norm + Head-A (Direct/Proj) & Head-B (Regularized Curl) + `PhysicalReadout3D` | 前后向形状、梯度反传、Head-A/B 对照测试与 `64×96×192` 显存/吞吐基准 | 编码器-解码器零跨层 skip；`Spatial Transformer ×1` 真实生效（禁 `depth=0`）；2 通道 `geometry` 解码无误；Head-A/B 在解析无散场上通过物理算子核验 |
-| **R3 · G1/G2 训练** | Stage 1 训练闭环、原子 Checkpoint 恢复、Head-A/B 近壁与散度对比、10 步轻量潜预测筛选、SHA-256 冻结缓存导出 | 留出帧重构报告（速度 $\text{m/s}$ 与压力 $\text{Pa}$ 分列）、近壁第一层剖面、冻结 `z_clean + b` 缓存 | 测试集严禁参与选模型；缓存 manifest 绑定权重/契约/数据三项 SHA-256 |
-| **R4 · 条件接口** | 五槽位 `condition_tokens [B,5,256]`（可插拔文本 + 物理 + 含 $\Delta t^*$ 步长 + 已知动作 + 纯历史流态） | 匹配/错配/恒定文本与物理参数反事实单测、因果掩码单测 | 未来不可见字段零泄漏；$Re \approx |U_0|D/\nu$ 冲突硬拦截；History-Length Dropout 验证生效 |
-| **R5 · G3 演化** | Clean/Query 时空因果 Transformer（Mode-FM 含噪桥 & Mode-Res 一步残差）+ 历史专用正尺度 `b_hat` 头 + FIFO 自回归滚动 | 在 50 步真实轨迹上完成 $H=10/20/45$ 步（及长轨迹 $H=50/100$ 步）自由滚动评测，与 `Persistence` / `Delta-z` 基线对照 | 彻底消除 $(z_\tau - z_t)/\tau$ 代数捷径；分通道报告速度（$\text{m/s}$）与压力（$\text{Pa}$）误差、尾流相位/频率及散度 |
+| 轮次 | 状态 | 范围 | 关键输出 | 必须通过的验收门槛 |
+| :--- | :--- | :--- | :--- | :--- |
+| **R1 · G0** | **已完成（`f5dc000`）** | `src/flow3d/` 契约、数据探针、3 套真实数据源适配器、防泄漏切分、逐帧 6 维归一化、相容 `div_h/curl_h` 与真实壁面 BC、`cli/inspect_data.py` | 本机 3 套 3D 数据实测 G0 报告（`docs/g0_inspection_report.json`，含自动隔离 `c04_wm_25steps_golden.h5` 与 `re180k`）；`tests/flow3d/` 4 套单测（**云端 Agent 严禁重复实现 R1**） | 归一化往返误差 $\le 10^{-5}$；有效内部域 `div_h(curl_h(A)) == 0` 解析测试通过；固体 `NaN` 不污染统计；流体 `NaN` 与 $Re$ 错配必拦截；既有 `tests/test_*.py` 零回归 |
+| **R2 · G1 结构** | **下一阶段（云端 GPU）** | 3D DC-AE (`S2C/C2S`) + `Spatial Transformer ×1` + 可配置 Latent Norm + Head-A (Direct/Proj) & Head-B (Regularized Curl) + `PhysicalReadout3D` | 前后向形状、梯度反传、Head-A/B 对照测试与 `64×96×192` 显存/吞吐基准（见 `docs/FlowWorld3D_AI_Coding_R2_Prompt.md`） | 编码器-解码器零跨层 skip；`Spatial Transformer ×1` 真实生效（禁 `depth=0`）；2 通道 `geometry` 解码无误；Head-A/B 在解析无散场上通过物理算子核验 |
+| **R3 · G1/G2 训练** | 待执行 | Stage 1 训练闭环、原子 Checkpoint 恢复、Head-A/B 近壁与散度对比、10 步轻量潜预测筛选、SHA-256 冻结缓存导出 | 留出帧重构报告（速度 $\text{m/s}$ 与压力 $\text{Pa}$ 分列）、近壁第一层剖面、冻结 `z_clean + b` 缓存 | 测试集严禁参与选模型；缓存 manifest 绑定权重/契约/数据三项 SHA-256 |
+| **R4 · 条件接口** | 待执行 | 五槽位 `condition_tokens [B,5,256]`（可插拔文本 + 物理 + 含 $\Delta t^*$ 步长 + 已知动作 + 纯历史流态） | 匹配/错配/恒定文本与物理参数反事实单测、因果掩码单测 | 未来不可见字段零泄漏；$Re \approx |U_0|D/\nu$ 冲突硬拦截；History-Length Dropout 验证生效 |
+| **R5 · G3 演化** | 待执行 | Clean/Query 时空因果 Transformer（Mode-FM 含噪桥 & Mode-Res 一步残差）+ 历史专用正尺度 `b_hat` 头 + FIFO 自回归滚动 | 在 50 步真实轨迹上完成 $H=10/20/45$ 步（及长轨迹 $H=50/100$ 步）自由滚动评测，与 `Persistence` / `Delta-z` 基线对照 | 彻底消除 $(z_\tau - z_t)/\tau$ 代数捷径；分通道报告速度（$\text{m/s}$）与压力（$\text{Pa}$）误差、尾流相位/频率及散度 |
 
 ---
 

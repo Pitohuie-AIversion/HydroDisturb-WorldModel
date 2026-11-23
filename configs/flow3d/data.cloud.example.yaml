@@ -1,0 +1,59 @@
+# FlowWorld-3D V1.3 (Route A) — Cloud / Linux Data Configuration Example
+#
+# Usage on a Linux GPU cloud node:
+#   1. Copy this file to `configs/flow3d/data.cloud.yaml` (do not overwrite local Windows `data.yaml`).
+#   2. Adjust the Linux paths under `sources:` to match your mounted storage (e.g., `/data/hydrodisturb/...`).
+#   3. Run G0 verification before training:
+#        python -m src.flow3d.cli.inspect_data --config configs/flow3d/data.cloud.yaml
+#
+# ==============================================================================
+# WHICH MULTI-RE HDF5 TRAJECTORIES TO UPLOAD (VERIFIED ELIGIBLE ONLY)
+# ==============================================================================
+# Upload ONLY the following 3 verified 50-step trajectories into `multi_re_world_model_h5_dir`
+# (together with `manifest.json`, `multi_re_tier1_certification_summary.json`, and
+# `extraction_and_rampool_assessment.json` so G0 provenance auditing passes):
+#   1. re200k_wm_50steps.h5  (Re=2.0e5, U0=0.7926 m/s, 50 steps, dt_phys=0.041 s, dt_ctu=0.1083)
+#   2. re350k_wm_50steps.h5  (Re=3.5e5, U0=1.38705 m/s, 50 steps, dt_phys=0.020 s, dt_ctu=0.0925)
+#   3. re1m_wm_50steps.h5    (Re=1.0e6, U0=3.9630 m/s, 50 steps, dt_phys=0.010 s, dt_ctu=0.1321)
+# Note on HDF5 6-channel order: [u_star, v_cross_star, w_span_star, p_star, sdf_star, solid_mask]
+#   -> Channel 4 (`sdf_star`) and Channel 5 (`solid_mask`, 1=solid) MUST be swapped and flipped to
+#      `geometry = [fluid_mask = 1 - solid_mask, sdf_over_d = sdf_star]` via
+#      `flow3d.data.schema.convert_h5_6channel_to_field_and_geometry`.
+#
+# ==============================================================================
+# QUARANTINE WARNING — DO NOT UPLOAD THESE CORRUPTED / MISMATCHED FILES
+# ==============================================================================
+# DO NOT upload or include in any train/val/test split:
+#   - c04_wm_25steps_golden.h5
+#       Reason: `ground_truth_verified: false` in manifest.json; bit-exact synthetic rank-2
+#       linear interpolation of 2 startup frames from Re=5001.3 (U0=0.01982 m/s) mislabeled as
+#       Re=126167.0 (U0=0.5 m/s).
+#   - re180k_mesh1_pilot (and any `.h5` / `.mph` derived from it)
+#       Reason: solver configuration mismatch — nominal Re=180000.0 vs actual COMSOL solve
+#       U0=0.5 m/s (actual Re=126167.05, violating |Re - |U0|D/nu|/Re <= 0.01).
+# Even if accidentally present, G0 `inspect_world_model_dataset_manifest` automatically marks
+# both as QUARANTINED and rejects them from eligible training lists.
+
+schema_version: flow3d.data.v1
+tensor_layout: B,T,C,Z,Y,X
+spatial_shape_zyx: [64, 96, 192]
+spacing_zyx_m: [0.01875, 0.01875, 0.01875]
+cylinder_diameter_m: 0.3
+reference_density_kg_m3: 1025.8944
+reference_viscosity_m2_s: 0.0000011889
+scale_floor_uvw: 0.000001
+scale_floor_p: 0.000001
+
+upload_policy:
+  verified_multi_re_h5_files: ["re200k_wm_50steps.h5", "re350k_wm_50steps.h5", "re1m_wm_50steps.h5"]
+  quarantined_do_not_upload: ["c04_wm_25steps_golden.h5", "re180k_mesh1_pilot"]
+  require_ground_truth_verified: true
+  re_consistency_rtol: 0.01
+
+sources:
+  # Optional: 4-frame C04 benchmark volume for single-frame G0/G1 reconstruction & BC check
+  c04_benchmark_4frame_npz: "/data/hydrodisturb/bench/c04_s1_volume_sequence.npz"
+  # Optional: 82-frame C04 shedding snapshots (YZX (96,64,192), solid NaNs, non-uniform dt segments)
+  c04_shedding_82frame_dir: "/data/hydrodisturb/c04_shedding/video_c04_shedding"
+  # Primary cloud dataset: directory containing manifest.json + the 3 verified multi-Re .h5 files ONLY
+  multi_re_world_model_h5_dir: "/data/hydrodisturb/03_world_model_dataset"
