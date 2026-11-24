@@ -4,7 +4,8 @@
 #   1. Copy this file to `configs/flow3d/data.cloud.yaml` (do not overwrite local Windows `data.yaml`).
 #   2. Adjust the Linux paths under `sources:` to match your mounted storage (e.g., `/data/hydrodisturb/...`).
 #   3. Run G0 verification before training:
-#        python -m src.flow3d.cli.inspect_data --config configs/flow3d/data.cloud.yaml
+#        python -m src.flow3d.cli.inspect_data --config configs/flow3d/data.cloud.yaml --strict
+#      Omit unmounted optional sources from the config, or inspect the HDF5 directory with --path.
 #
 # ==============================================================================
 # WHICH MULTI-RE HDF5 TRAJECTORIES TO UPLOAD (VERIFIED ELIGIBLE ONLY)
@@ -43,6 +44,9 @@ reference_density_kg_m3: 1025.8944
 reference_viscosity_m2_s: 0.0000011889
 scale_floor_uvw: 0.000001
 scale_floor_p: 0.000001
+# For a mounted canonical four-frame reference, set this from a trusted upstream publication.
+# Without an independent digest the NPZ remains UNVERIFIED and --strict returns nonzero.
+# c04_benchmark_sha256: "<trusted SHA-256>"
 
 upload_policy:
   verified_multi_re_h5_files: ["re200k_wm_50steps.h5", "re350k_wm_50steps.h5", "re1m_wm_50steps.h5"]

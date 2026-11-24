@@ -36,19 +36,20 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional path to save the structured JSON inspection report.",
     )
+    parser.add_argument("--expected-sha256", help="Trusted C04 benchmark SHA-256 for a single NPZ --path.")
     parser.add_argument(
         "--strict",
         action="store_true",
-        help="Return non-zero exit code (1) if any inspected source is MISSING or has 0 eligible trajectories.",
+        help="Exit 1 for missing, invalid or unverified C04 data, empty HDF5 admission, or a failed required candidate.",
     )
     return parser
 
 
 def _has_strict_failure(report: dict) -> bool:
-    if report.get("status") == "MISSING":
+    if report.get("status") in ("MISSING", "INVALID", "UNVERIFIED"):
         return True
-    if report.get("format") == "world_model_multi_re_hdf5_manifest" and report.get("eligible_trajectory_count", 0) <= 0:
-        return True
+    if report.get("format") == "world_model_multi_re_hdf5_manifest":
+        return report.get("eligible_trajectory_count", 0) <= 0 or report.get("required_candidate_failure_count", 0) > 0
     sources = report.get("sources")
     if isinstance(sources, dict):
         if not sources:
@@ -60,8 +61,10 @@ def _has_strict_failure(report: dict) -> bool:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.expected_sha256 and (not args.path or Path(args.path).suffix.lower() != ".npz"):
+        parser.error("--expected-sha256 requires a single NPZ --path")
     if args.path:
-        report = inspect_single_source(args.path)
+        report = inspect_single_source(args.path, expected_sha256=args.expected_sha256)
     else:
         report = run_g0_inspection_from_config(args.config)
 

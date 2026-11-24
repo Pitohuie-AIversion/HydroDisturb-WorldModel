@@ -44,29 +44,29 @@
    - 定义强类型数据结构与校验器：
      - `SampleProvenance`：包含完整字段 `case_id, geometry_id, trajectory_id, ancestor_id, segment_id, time_idx, time_phys_s, time_ctu, ground_truth_verified, tier1_stability_status`；
      - `Flow3DConditions`：包含 `reynolds_number, u0_m_s, diameter_m, viscosity_m2_s, dt_phys_s, dt_ctu, action_schedule, text_prompt, known_mask, valid_mask`；当 `reynolds_number` 与 `(u0_m_s, diameter_m, viscosity_m2_s)` 同时给定时，**强制校验 $Re \approx |U_0| D / \nu$（相对误差超过阈值时拒绝或显式抛出 `PhysicsContractError`）**；严禁未来不可见字段进入推理条件；
-     - `Flow3DBatch`：校验 `field [B, T, 4, Z, Y, X]`、`geometry [B, 2, Z, Y, X]`、`b [B, T, 6]`、`spacing (dz, dy, dx)`。
+     - `Flow3DBatch` 统一使用 SI 场（速度 m/s，压力 Pa）、SI 统计 `b` 和米制 `spacing (dz,dy,dx)`。几何通道为 `fluid_mask` 与 `SDF/D`。
 2. **`src/flow3d/data/schema.py`**：
    - 定义轴序转换契约（标准 `ZYX (64,96,192)` vs 原始 `YZX (96,64,192)`）、速度分量物理对齐映射、单位制（有量纲 SI vs 无量纲 `*_star`）、SDF 符号与无量纲化约定（`SDF/D`，流体 $>0$、壁面 $=0$、固体 $<0$）、边界条件枚举及 JSON/dict 可序列化 schema（提供零第三方依赖的 YAML/JSON 配置读取支持，使 `configs/flow3d/data.yaml` 在无 `pyyaml` 时也能解析）。
 3. **`src/flow3d/data/normalization.py`**：
-   - 实现 `Flow3DNormalizer` 与 `Flow3DNormStats`（版本标识 `"normalizer.flow3d.v1"`）：
+   - `Flow3DNormalizer` 与 `Flow3DNormStats` 对 SI 场计算逐帧统计量，当前版本为 `normalizer.flow3d.si.v2`。
      - 在每帧有效流体域 $M = (\text{fluid\_mask} > 0.5)$ 上以 `float64` 计算 **population variance (`ddof=0`)**，输出 `float32` 的 `b = [mu_u, mu_v, mu_w, mu_p, sigma_uvw, sigma_p]`；
      - **联合速度方差不除以 3**：$\sigma_{uvw} = \max(\sqrt{\operatorname{Var}_M(u) + \operatorname{Var}_M(v) + \operatorname{Var}_M(w)}, \text{scale\_floor}_{uvw})$；压力独立标准差 $\sigma_p = \max(\sqrt{\operatorname{Var}_M(p)}, \text{scale\_floor}_p)$；
      - **前置 `isfinite` 硬校验**：必须在掩码索引前校验有效流体域 $M$ 内所有值有限（流体域含 `NaN/Inf` 直接抛 `ValueError`）；固体域 $\neg M$ 内的 `NaN/Inf` 在索引外清洗为 `0.0`，**严禁使用 `values * mask` 导致 `NaN * 0` 污染**；
      - 空流体掩码（$|M| = 0$）直接 fail closed；常数场零方差在 `fit()` 中直接返回版本化 `scale_floor`（绝不返回 `0.0`）；支持 `[4, Z, Y, X]`、`[T, 4, Z, Y, X]`、`[B, T, 4, Z, Y, X]` 逐帧 `normalize / denormalize / roundtrip`。
 4. **`src/flow3d/data/adapters.py` & `src/flow3d/data/inspect.py`**：
    - `adapters.py`：显式支持并转换本机 3 类格式（未知格式明确报错，绝不盲猜）：
-     1. `load_c04_benchmark_npz`（读取 `c04_s1_volume_sequence.npz`，执行 `fluid_mask = 1 - solid_mask`、`sdf_over_d = sdf / D`）；
+     1. `load_c04_benchmark_npz` 核对上游保存的 case、轴布局、物理通道与单位、几何、网格和恒步时间轴。配置 `c04_benchmark_sha256` 或 CLI `--path ... --expected-sha256 ...` 提供独立取得的真值文件摘要。四帧规范网格通过全部检查才记为 `VERIFIED_4FRAME_BENCHMARK`。缺少摘要时可解码和检查，但 provenance 为未认证。摘要或元数据冲突记为 `INVALID`。`--strict` 对上述两种未通过的情况返回非零。
      2. `load_c04_shedding_directory`（读取 `video_c04_shedding/*.npz`，按 `time_s` 排序，剔除或报告重复时间戳，切分恒定 $\Delta t$ 连续子段 `segment_id`，执行 `(96,64,192) -> (64,96,192)` 转置与 `[u, w_cross, v_span, p]` 通道对齐，由固体 `NaN` 提取 `fluid_mask` 并清洗固体 `NaN`）；
      3. `inspect_world_model_dataset_manifest`（解析 `03_world_model_dataset/manifest.json` 与 `multi_re_tier1_certification_summary.json`，映射 `["u_star", "v_cross_star", "w_span_star", "p_star", "sdf_star", "solid_mask"]` 第 4/5 通道互换与极性翻转；当环境装有 `h5py` 时支持直接读取 `.h5` 张量，未装 `h5py` 时解析 manifest + HDF5 头部签名并明确报告）；
-     4. **伪数据/错配自动隔离器**：对 `ground_truth_verified == false`、`ground_truth_warning` 非空、$Re \neq |U_0|D/\nu$、或时间序列差分矩阵秩 $\le 2$（线性插值合成伪轨迹，如 `c04_wm_25steps_golden.h5`）自动标记 `quarantined = True` 并说明原因。
+     4. **来源与插值核验**。清单明确否决、已证实插值或求解物性错配的轨迹隔离。低秩仅作诊断；与端点线性插值相符的未知轨迹待复核。签名核验通过但缺少 `h5py` 时报告 `UNVERIFIED`。
    - `inspect.py`：对给定路径生成结构化 G0 诊断报告（形状、轴序、步长 $\Delta t_{\text{phys}}$ 与 $\Delta t_{\text{ctu}}$、有效流体比例、固体 `NaN` 数量、物理散度基线、近壁第一层流速统计、窗口可用性、隔离列表及对 $H=10/50/100$ 的实际支撑上限）。
 5. **`src/flow3d/data/splits.py`**：
    - 按 `ancestor_id` 优先、`trajectory_id` 次之进行分组切分，严禁按滑动窗口随机打乱造成 train/val/test 泄漏；
-   - 针对单轨迹长序列（或少轨迹场景），额外提供**带安全隔离带（`purge_gap_frames >= L + H`）的连续时间段切分模式（`temporal_block_split_with_purge`）**，并在 provenance 缺失时拒绝宣称零泄漏。
+   - 针对单轨迹长序列（或少轨迹场景），额外提供**带安全隔离带（`purge_gap_frames >= L + H`）的连续时间段切分模式（`temporal_block_split_with_purge`）**。按顺序传入同一已核验祖先、轨迹及恒步段的逐帧出处，并显式传入 `history_frames` 与 `forecast_frames`。每个启用的分区至少容纳一个完整窗口；`window_starts` 给出各分区内合法的起点，依据输入帧顺序编号。样本量不足或时间戳不连续时拒绝切分。单帧 Stage 1 重构使用 L=1、H=0。遇到多条共祖轨迹时数据集使用 `split_strategy="group_by_ancestor"`，使整组分支只进入同一分区。
 6. **`src/flow3d/physics/operators.py` & `src/flow3d/physics/boundary.py`**：
    - `operators.py`：在 `(..., Z, Y, X)` + `spacing = (dz, dy, dx)` 约定下实现 `centered_difference`、`div_h`（$\partial_X u + \partial_Y v + \partial_Z w$）、三维旋度 `curl_h`（$(\partial_Y A_z - \partial_Z A_y,\ \partial_Z A_x - \partial_X A_z,\ \partial_X A_y - \partial_Y A_x)$）及有效导数掩码 `build_3d_derivative_mask`（含算子级联后的二次腐蚀掩码 `valid_div_of_curl_mask`）；
    - 提供解析场检验函数，验证在相容中心差分与二次有效内部掩码 `valid_div_of_curl_mask` 上离散恒等式 $\|\operatorname{div}_h(\operatorname{curl}_h(\mathbf{A}))\|_\infty \le \epsilon$ 成立，并显式证明/记录在圆柱固体边界 1–2 层截断处该恒等式不自动成立；
-   - `boundary.py`：提取圆柱固体表面相邻的**第一层真实流体体素掩码（`first_fluid_shell_mask`）**，结合 `SDF/D` 梯度估算局部壁面法向 $\mathbf{n}$ 与切向速度分量 $(u_n, u_\tau)$，以及入口（$X=0$）/出口（$X=-1$）边界通量与速度剖面检查接口（明确区分“固体内部填零”与“真实壁面第一层流体无滑移/无穿透接近度”）。
+   - `boundary.py`：提取圆柱固体表面相邻的**第一层真实流体体素掩码（`first_fluid_shell_mask`）**，结合 `SDF/D` 梯度估算局部壁面法向 $\mathbf{n}$ 与切向速度分量 $(u_n, u_\tau)$。网格外侧六面是从完整 CFD 域裁剪得到的 ROI 截面。用相邻流体单元中心的法向速度乘实际面元面积，分别报告六个有符号的向外通量及总和（m³/s），并保留 x 两端流体截面的平均流向速度（m/s）。传入同一网格上的 `reference_4ch` 时逐面按相同流体掩码计算速度向量 RMSE（m/s）和压力 RMSE（Pa），空截面记录为不可比。圆柱壳层统计和求解器真实边界条件分别记录。[上游采样区和全域边界](https://github.com/Pitohuie-AIversion/HydroDisturb-Bench/blob/5ac9cf5c2df9da9e8cc38a0ea91a030f140032c0/configs/c04_re126k_3d_baseline.json#L25-L88)
 7. **`src/flow3d/data/fixtures.py`、`configs/flow3d/data.yaml`、`src/flow3d/cli/inspect_data.py`**：
    - `fixtures.py`：提供 3D 解析无散场（如由光滑矢量势 $\mathbf{A}$ 经 `curl_h` 生成的精确离散无散场 + 3D Taylor-Green 涡解析场）与带圆柱障碍物/固体 `NaN`/线性插值伪轨迹的合成测试 fixture；
    - `configs/flow3d/data.yaml`：记录 C04 标准三维网格、物理常数与本机 3 套数据源路径配置；

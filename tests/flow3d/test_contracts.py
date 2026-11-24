@@ -78,6 +78,26 @@ def test_flow3d_batch_shape_and_fluid_nan_validation():
         Flow3DBatch(field=bad_field, geometry=geom_b)
 
 
+def test_missing_certification_stays_unknown_after_deserialization():
+    raw = dict(case_id="a", geometry_id="cyl", trajectory_id="t", ancestor_id="s")
+    provenance = SampleProvenance.from_mapping(raw)
+    assert not provenance.ground_truth_verified
+    assert provenance.tier1_stability_status == "UNKNOWN"
+    with pytest.raises(PhysicsContractError, match="boolean"):
+        SampleProvenance.from_mapping({**raw, "ground_truth_verified": "false"})
+
+
+def test_normalized_grid_spacing_uses_each_examples_diameter():
+    batch = Flow3DBatch(
+        field=np.zeros((2, 1, 4, 2, 2, 2), dtype=np.float32),
+        geometry=np.ones((2, 2, 2, 2, 2), dtype=np.float32),
+        spacing=(0.02, 0.03, 0.04),
+        conditions=(Flow3DConditions(diameter_m=0.2), Flow3DConditions(diameter_m=0.4)),
+    )
+    np.testing.assert_allclose(batch.spacing_over_d(0), (0.1, 0.15, 0.2))
+    np.testing.assert_allclose(batch.spacing_over_d(1), (0.05, 0.075, 0.1))
+
+
 def test_group_split_prevents_ancestor_leakage_and_rejects_unverified_runs():
     provs = [
         SampleProvenance(
@@ -86,6 +106,7 @@ def test_group_split_prevents_ancestor_leakage_and_rejects_unverified_runs():
             trajectory_id=f"traj_{g}_{t}",
             ancestor_id=f"anc_{g}",
             time_idx=t,
+            ground_truth_verified=True,
         )
         for g in range(5)
         for t in range(4)
@@ -110,7 +131,10 @@ def test_group_split_prevents_ancestor_leakage_and_rejects_unverified_runs():
         group_split_by_provenance(bad_provs)
 
     # Temporal block split with purge gap for single trajectory
-    t_split = temporal_block_split_with_purge(num_frames=50, purge_gap_frames=5)
+    frames = [SampleProvenance(case_id="c04", geometry_id="g", ancestor_id="ancestor", trajectory_id="series",
+                               ground_truth_verified=True, time_idx=t, time_phys_s=t*.06, time_ctu=t*.1)
+              for t in range(50)]
+    t_split = temporal_block_split_with_purge(frames, history_frames=4, forecast_frames=1, purge_gap_frames=5)
     assert max(t_split.train_indices) + 5 < min(t_split.val_indices)
     assert max(t_split.val_indices) + 5 < min(t_split.test_indices)
 
@@ -150,6 +174,7 @@ def test_dt_ctu_consistency_and_cross_split_ancestor_leakage_rejection():
             geometry_id="cyl_d0p3",
             trajectory_id=f"traj_{i}",
             ancestor_id="shared_anc_0" if i < 4 else "anc_other",
+            ground_truth_verified=True,
         )
         for i in range(5)
     ]

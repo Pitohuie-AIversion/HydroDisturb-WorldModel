@@ -36,8 +36,8 @@ class DatasetSchema3D:
     mask_convention: str = "fluid_mask_1_fluid_0_solid"
     boundary_x_inlet: str = "dirichlet_inflow_U0"
     boundary_x_outlet: str = "pressure_outlet_zero_gauge"
-    boundary_y_cross: str = "slip_or_farfield_channel_walls"
-    boundary_z_span: str = "spanwise_symmetry_or_nonperiodic_bounded"
+    boundary_y_cross: str = "slip_farfield"
+    boundary_z_span: str = "periodic"
     boundary_cylinder: str = "immersed_solid_noslip_impermeable"
 
     def validate_spatial_shape(self, shape_zyx: tuple[int, int, int]) -> None:
@@ -47,6 +47,13 @@ class DatasetSchema3D:
             )
 
     def to_dict(self) -> dict[str, Any]:
+        solver_boundaries = {
+            "x_inlet": self.boundary_x_inlet,
+            "x_outlet": self.boundary_x_outlet,
+            "y_cross": self.boundary_y_cross,
+            "z_span": self.boundary_z_span,
+            "cylinder": self.boundary_cylinder,
+        }
         return {
             "schema_version": self.schema_version,
             "tensor_layout": self.tensor_layout,
@@ -58,18 +65,14 @@ class DatasetSchema3D:
             "sdf_sign_convention": self.sdf_sign_convention,
             "sdf_unit_convention": self.sdf_unit_convention,
             "mask_convention": self.mask_convention,
-            "boundaries": {
-                "x_inlet": self.boundary_x_inlet,
-                "x_outlet": self.boundary_x_outlet,
-                "y_cross": self.boundary_y_cross,
-                "z_span": self.boundary_z_span,
-                "cylinder": self.boundary_cylinder,
-            },
+            "sampled_outer_faces": "interior_roi_cell_center_traces",
+            "solver_boundaries": solver_boundaries,
+            "boundaries": solver_boundaries.copy(),  # Legacy key for solver BCs.
         }
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any]) -> "DatasetSchema3D":
-        b = raw.get("boundaries", {})
+        b = raw.get("solver_boundaries", raw.get("boundaries", {}))
         return cls(
             schema_version=str(raw.get("schema_version", "flow3d.schema.v1")),
             tensor_layout=str(raw.get("tensor_layout", "B,T,C,Z,Y,X")),
@@ -133,11 +136,13 @@ def convert_h5_6channel_to_field_and_geometry(
         raise PhysicsContractError(f"expected (..., 6, Z, Y, X) HDF5 tensor, got shape {arr.shape}")
     field = arr[..., :4, :, :, :].copy()
     sdf_star = arr[..., 4, :, :, :]
+    solid_mask = arr[..., 5, :, :, :]
+    if not np.isfinite(sdf_star).all() or not np.all((solid_mask == 0) | (solid_mask == 1)):
+        raise PhysicsContractError("HDF5 geometry requires a finite SDF and binary solid_mask")
     if sdf_clip is not None:
-        if sdf_clip <= 0:
+        if not np.isfinite(sdf_clip) or sdf_clip <= 0:
             raise PhysicsContractError("sdf_clip must be positive")
         sdf_star = np.clip(sdf_star, -float(sdf_clip), float(sdf_clip))
-    solid_mask = arr[..., 5, :, :, :]
     fluid_mask = (1.0 - (solid_mask > 0.5).astype(np.float32))
     geometry = np.stack([fluid_mask, sdf_star], axis=-4).astype(np.float32)
     return field, geometry

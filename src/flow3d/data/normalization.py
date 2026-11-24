@@ -7,6 +7,46 @@ import numpy as np
 
 from flow3d.contracts import PhysicsContractError
 
+SI_NORMALIZER_VERSION = "normalizer.flow3d.si.v2"
+
+
+def si_roundtrip_diagnostics(
+    reference_si: np.ndarray, restored_si: np.ndarray, fluid_mask: np.ndarray
+) -> dict[str, Any]:
+    """Check a single FP32 normalize/invert cycle in SI on valid fluid cells."""
+    mask = np.asarray(fluid_mask)
+    if mask.ndim != 3 or not np.isfinite(mask).all() or not (mask > 0.5).any():
+        raise PhysicsContractError("SI roundtrip requires a nonempty finite fluid mask")
+    valid = mask > 0.5
+    reference = np.asarray(reference_si)
+    restored = np.asarray(restored_si)
+    if reference.shape != (4, *valid.shape) or restored.shape != reference.shape:
+        raise PhysicsContractError("SI roundtrip expects matching (4,Z,Y,X) frames and spatial mask")
+
+    rtol = 4 * float(np.finfo(np.float32).eps)
+    channels = {}
+    for index, name in enumerate(("u", "v", "w", "p")):
+        target = reference[index, valid].astype(np.float64)
+        actual = restored[index, valid].astype(np.float64)
+        if not np.isfinite(target).all() or not np.isfinite(actual).all():
+            raise PhysicsContractError(f"non-finite SI roundtrip value in fluid channel {name}")
+        atol = 1e-5 if name == "p" else 1e-7
+        # Centering and adding the frame mean back can dominate error at near-zero cells.
+        tolerance = atol + rtol * np.maximum(np.abs(target), abs(target.mean()))
+        error = np.abs(actual - target)
+        channels[name] = {
+            "unit": "Pa" if name == "p" else "m/s",
+            "atol": atol,
+            "max_abs_error": float(error.max()),
+            "cells_outside_tolerance": int(np.count_nonzero(error > tolerance)),
+        }
+    return {
+        "passed": all(c["cells_outside_tolerance"] == 0 for c in channels.values()),
+        "rtol": rtol,
+        "fluid_cell_count": int(valid.sum()),
+        "channels": channels,
+    }
+
 
 @dataclass(frozen=True)
 class Flow3DNormStats:
@@ -24,7 +64,7 @@ class Flow3DNormStats:
     sigma_p: float
     scale_floor_uvw: float = 1e-6
     scale_floor_p: float = 1e-6
-    version: str = "normalizer.flow3d.v1"
+    version: str = SI_NORMALIZER_VERSION
 
     def as_array(self) -> np.ndarray:
         return np.asarray(
@@ -33,7 +73,7 @@ class Flow3DNormStats:
         )
 
     @classmethod
-    def from_array(cls, b: np.ndarray, **kwargs: Any) -> "Flow3DNormStats":
+    def from_array(cls, b: np.ndarray, **kwargs: Any) -> Flow3DNormStats:
         arr = np.asarray(b, dtype=np.float32).reshape(-1)
         if arr.size != 6:
             raise PhysicsContractError(f"expected 6 normalization stats, got {arr.size}")
@@ -51,7 +91,7 @@ class Flow3DNormalizer:
         self,
         scale_floor_uvw: float = 1e-6,
         scale_floor_p: float = 1e-6,
-        version: str = "normalizer.flow3d.v1",
+        version: str = SI_NORMALIZER_VERSION,
     ) -> None:
         if scale_floor_uvw <= 0 or scale_floor_p <= 0:
             raise PhysicsContractError("scale_floor_uvw and scale_floor_p must be positive")

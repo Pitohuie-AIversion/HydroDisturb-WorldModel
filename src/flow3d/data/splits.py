@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Sequence
+from collections.abc import Sequence
+
+import numpy as np
 
 from flow3d.contracts import PhysicsContractError, SampleProvenance
 
@@ -15,7 +17,9 @@ class SplitAssignment:
     train_groups: tuple[str, ...]
     val_groups: tuple[str, ...]
     test_groups: tuple[str, ...]
-    leakage_verified: bool = True
+    leakage_verified: bool = False
+    # Starts of complete L+H windows, indexed in the supplied frame sequence.
+    window_starts: tuple[tuple[int, ...], ...] | None = None
 
 
 def group_split_by_provenance(
@@ -111,42 +115,80 @@ def group_split_by_provenance(
 
 
 def temporal_block_split_with_purge(
-    num_frames: int,
-    purge_gap_frames: int = 5,
+    provenances: Sequence[SampleProvenance],
+    *,
+    history_frames: int,
+    forecast_frames: int,
+    purge_gap_frames: int | None = None,
     ratios: tuple[float, float, float] = (0.6, 0.2, 0.2),
-    trajectory_id: str = "traj_0",
 ) -> SplitAssignment:
-    """Contiguous temporal block split with mandatory purge gaps between train, val, and test."""
-    if num_frames <= 0:
-        raise PhysicsContractError("num_frames must be positive")
-    if purge_gap_frames < 1:
-        raise PhysicsContractError("purge_gap_frames must be >= 1 to prevent window boundary leakage")
-    usable = num_frames - 2 * purge_gap_frames
-    if usable < 3:
+    """Split one verified constant-step segment; frame indices and starts refer to its input order."""
+    if (
+        type(history_frames) is not int
+        or history_frames < 1
+        or type(forecast_frames) is not int
+        or forecast_frames < 0
+    ):
+        raise PhysicsContractError("history_frames must be positive and forecast_frames nonnegative integers")
+    if forecast_frames == 0 and history_frames != 1:
+        raise PhysicsContractError("H=0 is reserved for single-frame Stage 1 reconstruction (L=1)")
+    width = history_frames + forecast_frames
+    gap = width if purge_gap_frames is None else purge_gap_frames
+    if type(gap) is not int or gap < width:
+        raise PhysicsContractError("purge_gap_frames must be >= history_frames + forecast_frames")
+    if (
+        len(ratios) != 3
+        or not np.isfinite(ratios).all()
+        or min(ratios) < 0
+        or ratios[0] <= 0
+        or not np.isclose(sum(ratios), 1)
+    ):
         raise PhysicsContractError(
-            f"num_frames={num_frames} is too short for 3 contiguous blocks with purge_gap_frames={purge_gap_frames}"
+            "split ratios must be finite, nonnegative, sum to one and include training"
         )
-    n_val = max(1, int(round(usable * ratios[1])))
-    n_test = max(1, int(round(usable * ratios[2])))
-    n_train = usable - n_val - n_test
-    if n_train < 1:
-        raise PhysicsContractError("insufficient frames for train block after purge gaps")
-
-    train_end = n_train
-    val_start = train_end + purge_gap_frames
-    val_end = val_start + n_val
-    test_start = val_end + purge_gap_frames
-
-    train_idx = tuple(range(0, train_end))
-    val_idx = tuple(range(val_start, val_end))
-    test_idx = tuple(range(test_start, num_frames))
+    if not provenances or any(
+        not isinstance(p, SampleProvenance) or not p.ground_truth_verified for p in provenances
+    ):
+        raise PhysicsContractError("verified per-frame provenance is required for temporal splitting")
+    for key in ("case_id", "geometry_id", "ancestor_id", "trajectory_id", "segment_id"):
+        labels = {getattr(p, key) for p in provenances}
+        if len(labels) != 1 or next(iter(labels)).strip().casefold() in {"", "unknown", "none", "null"}:
+            raise PhysicsContractError(f"temporal split requires one known {key}")
+    active = [i for i, r in enumerate(ratios) if r > 0]
+    usable = len(provenances) - gap * (len(active) - 1)
+    if usable < width * len(active):
+        raise PhysicsContractError(
+            "insufficient frames for at least one complete window in each requested split"
+        )
+    if any(
+        not isinstance(p.time_idx, (int, np.integer)) or isinstance(p.time_idx, bool) for p in provenances
+    ):
+        raise PhysicsContractError("time_idx must be an integer solver step")
+    steps = np.diff([p.time_idx for p in provenances])
+    if steps.size and ((steps <= 0).any() or not np.all(steps == steps[0])):
+        raise PhysicsContractError("time_idx must increase at a constant stride")
+    for key in ("time_phys_s", "time_ctu"):
+        axis = np.array([getattr(p, key) for p in provenances], dtype=np.float64)
+        deltas = np.diff(axis)
+        tol = 2 * np.finfo(np.float32).eps * np.max(np.abs(axis))
+        if (
+            not np.isfinite(axis).all()
+            or (deltas <= 0).any()
+            or (deltas.size and not np.allclose(deltas, deltas.mean(), atol=tol, rtol=1e-5))
+        ):
+            raise PhysicsContractError(f"{key} must be increasing with constant spacing")
+    # Reserve one full window for every requested block, then approach the requested frame ratios.
+    sizes = [width if i in active else 0 for i in range(3)]
+    for _ in range(usable - sum(sizes)):
+        sizes[max(active, key=lambda i: usable * ratios[i] - sizes[i])] += 1
+    blocks, starts, groups = [()] * 3, [()] * 3, [()] * 3
+    offset = 0
+    for i in active:
+        end = offset + sizes[i]
+        blocks[i] = tuple(range(offset, end))
+        starts[i] = tuple(range(offset, end - width + 1))
+        groups[i] = (f"{provenances[0].trajectory_id}:{provenances[0].segment_id}[{offset}:{end}]",)
+        offset = end + gap
     return SplitAssignment(
-        train_indices=train_idx,
-        val_indices=val_idx,
-        test_indices=test_idx,
-        group_by=f"temporal_block_purge_{purge_gap_frames}",
-        train_groups=(f"{trajectory_id}:t[0..{train_end - 1}]",),
-        val_groups=(f"{trajectory_id}:t[{val_start}..{val_end - 1}]",),
-        test_groups=(f"{trajectory_id}:t[{test_start}..{num_frames - 1}]",),
-        leakage_verified=True,
+        *blocks, f"temporal_block_purge_{gap}", *groups, leakage_verified=True, window_starts=tuple(starts)
     )

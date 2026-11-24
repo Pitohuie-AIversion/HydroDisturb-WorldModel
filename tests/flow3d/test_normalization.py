@@ -5,7 +5,7 @@ import pytest
 
 from flow3d.contracts import PhysicsContractError
 from flow3d.data.fixtures import make_cylinder_geometry_3d
-from flow3d.data.normalization import Flow3DNormalizer
+from flow3d.data.normalization import Flow3DNormalizer, si_roundtrip_diagnostics
 
 
 def test_flow3d_normalizer_joint_velocity_variance_not_divided_by_three_and_roundtrip():
@@ -33,13 +33,38 @@ def test_flow3d_normalizer_joint_velocity_variance_not_divided_by_three_and_roun
     restored = normalizer.denormalize(norm_field, b, fluid_mask=fluid_mask)
     for b_idx in range(2):
         for t_idx in range(3):
-            for c_idx in range(4):
-                assert np.allclose(
-                    restored[b_idx, t_idx, c_idx, valid],
-                    field[b_idx, t_idx, c_idx, valid],
-                    atol=1e-4,
-                    rtol=1e-5,
-                )
+            errors = si_roundtrip_diagnostics(field[b_idx, t_idx], restored[b_idx, t_idx], valid)
+            assert errors["passed"], errors["channels"]
+
+
+def test_fp32_si_readout_tolerances_resolve_high_pressure_and_small_velocities():
+    torch = pytest.importorskip("torch")
+    from flow3d.models.heads import PhysicalReadout3D
+
+    rng = np.random.default_rng(392)
+    field = rng.uniform(-1, 1, size=(4, 8, 8, 8)).astype(np.float32)
+    field[3] *= 14_000  # Pa, comparable to Re1m
+    field[3, 0, 0, 1] = 0  # also check cancellation when the reference pressure is near zero
+    mask = np.ones((8, 8, 8), dtype=np.float32)
+    mask[0, 0, 0] = 0
+    field[:, 0, 0, 0] = np.nan
+    norm, b = Flow3DNormalizer().normalize(field, mask)
+    restored = PhysicalReadout3D()(
+        torch.from_numpy(norm[None]), torch.from_numpy(b[None]), torch.from_numpy(mask[None, None])
+    )[0].detach().numpy()
+    report = si_roundtrip_diagnostics(field, restored, mask)
+    assert report["passed"], report["channels"]
+    assert report["channels"]["p"]["max_abs_error"] > 1e-5
+    assert report["fluid_cell_count"] == 511
+
+    restored[0, 1, 0, 0] += 1e-5
+    restored[3, 1, 0, 0] += 0.1
+    report = si_roundtrip_diagnostics(field, restored, mask)
+    assert not report["passed"]
+    assert [c["cells_outside_tolerance"] for c in report["channels"].values()] == [1, 0, 0, 1]
+    restored[3, 1, 0, 0] = np.nan
+    with pytest.raises(PhysicsContractError, match="non-finite"):
+        si_roundtrip_diagnostics(field, restored, mask)
 
 
 def test_solid_nans_never_poison_stats_and_fluid_nans_fail_closed():

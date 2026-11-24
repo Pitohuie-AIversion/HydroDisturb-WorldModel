@@ -7,6 +7,9 @@ reference_density_kg_m3: 1025.8944
 reference_viscosity_m2_s: 0.0000011889
 scale_floor_uvw: 0.000001
 scale_floor_p: 0.000001
+# For a mounted canonical four-frame reference, set this from a trusted upstream publication.
+# Without an independent digest the NPZ remains UNVERIFIED and --strict returns nonzero.
+# c04_benchmark_sha256: "<trusted SHA-256>"
 sources:
   c04_benchmark_4frame_npz: "D:/📁 01_Workspaces (代码与工程区)/HydroDisturb-Bench/runs/c04_s1_volume_sequence.npz"
   c04_shedding_82frame_dir: "Z:/E/cfd_3d/05_reports_viz/video_c04_shedding"

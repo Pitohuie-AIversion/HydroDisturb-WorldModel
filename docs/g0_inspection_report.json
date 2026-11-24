@@ -1,6 +1,14 @@
 {
   "schema_version": "flow3d.data.v1",
-  "config_path": "configs/flow3d/data.yaml",
+  "inspection_scope": {
+    "historical_config_path": "configs/flow3d/data.yaml",
+    "historical_sources": [
+      "c04_benchmark_4frame_npz",
+      "c04_shedding_82frame_dir"
+    ],
+    "reinspected_source": "multi_re_world_model_h5_dir",
+    "reinspection_mode": "inspect_data --path <dataset_dir> --strict"
+  },
   "sources": {
     "c04_benchmark_4frame_npz": {
       "format": "c04_benchmark_npz",
@@ -29,11 +37,15 @@
         "first_shell_tangential_speed_rms": 0.3875926158448957,
         "first_shell_total_speed_rms": 0.39188806306485746,
         "solid_interior_max_abs": 0.0,
-        "inlet_mean_u": 0.48316089876849827,
-        "outlet_mean_u": 0.4741956298967125,
-        "net_streamwise_flux_diff": -0.008965268871785781
+        "historical_x_min_mean_u_m_s": 0.48316089876849827,
+        "historical_x_max_mean_u_m_s": 0.4741956298967125,
+        "historical_x_mean_u_difference_m_s": -0.008965268871785781,
+        "roi_net_outward_flux_m3_s": null,
+        "note": "Historical plane velocities; the six ROI face fluxes require the original frames."
       },
-      "status": "VERIFIED_4FRAME_BENCHMARK"
+      "status": "UNVERIFIED",
+      "ground_truth_verified": false,
+      "verification_reason": "Historical Windows schema probe only. No independent reference SHA-256 or NPZ bytes were available for the current inspection."
     },
     "c04_shedding_82frame_dir": {
       "format": "c04_shedding_npz_directory",
@@ -282,9 +294,8 @@
     },
     "multi_re_world_model_h5_dir": {
       "format": "world_model_multi_re_hdf5_manifest",
-      "path": "Z:\\E\\cfd_3d\\03_world_model_dataset",
+      "path": "/root/autodl-tmp/datasets/world_model",
       "eligible_trajectory_count": 3,
-      "quarantined_count": 2,
       "eligible_trajectories": [
         {
           "case_id": "re1m_wm_50steps",
@@ -292,9 +303,122 @@
           "reynolds_number": 1000000.0,
           "u0_m_s": 3.963,
           "num_steps": 50,
+          "file_exists_on_disk": true,
+          "tier1_limit_cycle_status": "UNSTABLE",
+          "tensor_key": "flow_fields",
+          "first_frame_boundary_diagnostics": {
+            "first_shell_cell_count": 3072,
+            "first_shell_normal_speed_rms": 0.4271441506226762,
+            "first_shell_tangential_speed_rms": 3.7067863463607402,
+            "first_shell_total_speed_rms": 3.731315738848372,
+            "solid_interior_max_abs": 0.0,
+            "roi_flux_method": "nearest_cell_center_velocity_times_face_area; outward_positive",
+            "roi_x_min_mean_u_m_s": 3.8531380279843384,
+            "roi_x_max_mean_u_m_s": 3.865718920986789,
+            "roi_face_reference_errors": null,
+            "roi_face_flux_m3_s": {
+              "x_min": -8.322778529460551,
+              "x_max": 8.349953259616017,
+              "y_min": 0.014448274771405454,
+              "y_max": 0.03990539814061642,
+              "z_min": -0.02142537165582105,
+              "z_max": -0.056162980574991986
+            },
+            "roi_net_outward_flux_m3_s": 0.003940050836674296
+          },
+          "effective_temporal_rank": 37,
+          "low_temporal_rank": false,
+          "si_normalizer_roundtrips": [
+            {
+              "frame_index": 0,
+              "passed": true,
+              "rtol": 4.76837158203125e-07,
+              "fluid_cell_count": 1166336,
+              "channels": {
+                "u": {
+                  "unit": "m/s",
+                  "atol": 1e-07,
+                  "max_abs_error": 3.5762786865234375e-07,
+                  "cells_outside_tolerance": 0
+                },
+                "v": {
+                  "unit": "m/s",
+                  "atol": 1e-07,
+                  "max_abs_error": 2.384185791015625e-07,
+                  "cells_outside_tolerance": 0
+                },
+                "w": {
+                  "unit": "m/s",
+                  "atol": 1e-07,
+                  "max_abs_error": 5.960464477539063e-08,
+                  "cells_outside_tolerance": 0
+                },
+                "p": {
+                  "unit": "Pa",
+                  "atol": 1e-05,
+                  "max_abs_error": 0.0009765625,
+                  "cells_outside_tolerance": 0
+                }
+              }
+            },
+            {
+              "frame_index": 49,
+              "passed": true,
+              "rtol": 4.76837158203125e-07,
+              "fluid_cell_count": 1166336,
+              "channels": {
+                "u": {
+                  "unit": "m/s",
+                  "atol": 1e-07,
+                  "max_abs_error": 3.5762786865234375e-07,
+                  "cells_outside_tolerance": 0
+                },
+                "v": {
+                  "unit": "m/s",
+                  "atol": 1e-07,
+                  "max_abs_error": 2.384185791015625e-07,
+                  "cells_outside_tolerance": 0
+                },
+                "w": {
+                  "unit": "m/s",
+                  "atol": 1e-07,
+                  "max_abs_error": 5.960464477539063e-08,
+                  "cells_outside_tolerance": 0
+                },
+                "p": {
+                  "unit": "Pa",
+                  "atol": 1e-05,
+                  "max_abs_error": 0.0009765625,
+                  "cells_outside_tolerance": 0
+                }
+              }
+            }
+          ],
+          "spacing_m": [
+            0.018749999621557812,
+            0.018750001254834628,
+            0.018749999750347038
+          ],
+          "spacing_star": [
+            0.06249999873852604,
+            0.06250000418278209,
+            0.062499999167823464
+          ],
+          "field_units": [
+            "m/s",
+            "m/s",
+            "m/s",
+            "Pa"
+          ],
+          "dt_phys_mean_s": 0.009999995328942123,
+          "dt_ctu_mean": 0.13210000797193877,
+          "t_start_s": 14.510000228881836,
+          "t_end_s": 15.0,
+          "ancestor_id": "e:/codex_comsol_takeover/20261113/cpu_fill/results/re1m_mesh1_pilot/b2_rtol5e4_max005/b2_rtol5e4_max005.mph",
+          "tier1_stability_passed": false,
           "max_rollout_from_L4": 46,
-          "dt_phys_mean_s": 0.01,
-          "dt_ctu_mean": 0.1321,
+          "path": "/root/autodl-tmp/datasets/world_model/re1m_wm_50steps.h5",
+          "status": "ELIGIBLE",
           "raw_h5_channels": [
             "u_star",
             "v_cross_star",
@@ -304,8 +428,41 @@
             "solid_mask"
           ],
           "requires_ch4_ch5_swap_and_mask_flip": true,
-          "tier1_limit_cycle_status": "UNSTABLE",
-          "status": "ELIGIBLE"
+          "g3_window_support": {
+            "history_frames": 4,
+            "horizons": [
+              {
+                "forecast_frames": 10,
+                "available_starts": 37,
+                "forecast_duration_ctu": 1.3210000797193877,
+                "dft_delta_st": 0.7570022253234263
+              },
+              {
+                "forecast_frames": 20,
+                "available_starts": 27,
+                "forecast_duration_ctu": 2.6420001594387754,
+                "dft_delta_st": 0.37850111266171316
+              },
+              {
+                "forecast_frames": 45,
+                "available_starts": 2,
+                "forecast_duration_ctu": 5.944500358737245,
+                "dft_delta_st": 0.16822271673853917
+              },
+              {
+                "forecast_frames": 50,
+                "available_starts": 0,
+                "forecast_duration_ctu": null,
+                "dft_delta_st": null
+              },
+              {
+                "forecast_frames": 100,
+                "available_starts": 0,
+                "forecast_duration_ctu": null,
+                "dft_delta_st": null
+              }
+            ]
+          }
         },
         {
           "case_id": "re200k_wm_50steps",
@@ -313,9 +470,122 @@
           "reynolds_number": 200000.0,
           "u0_m_s": 0.7926,
           "num_steps": 50,
+          "file_exists_on_disk": true,
+          "tier1_limit_cycle_status": "UNSTABLE",
+          "tensor_key": "flow_fields",
+          "first_frame_boundary_diagnostics": {
+            "first_shell_cell_count": 3072,
+            "first_shell_normal_speed_rms": 0.08648955387438656,
+            "first_shell_tangential_speed_rms": 0.768252584097611,
+            "first_shell_total_speed_rms": 0.7731057339730752,
+            "solid_interior_max_abs": 0.0,
+            "roi_flux_method": "nearest_cell_center_velocity_times_face_area; outward_positive",
+            "roi_x_min_mean_u_m_s": 0.7716965363263929,
+            "roi_x_max_mean_u_m_s": 0.769311149129256,
+            "roi_face_reference_errors": null,
+            "roi_face_flux_m3_s": {
+              "x_min": -1.6668645963758044,
+              "x_max": 1.661712159789159,
+              "y_min": 0.002987976331566499,
+              "y_max": 0.0054219074518131165,
+              "z_min": -0.005753299535869549,
+              "z_max": 0.003958203253590395
+            },
+            "roi_net_outward_flux_m3_s": 0.0014623509144551352
+          },
+          "effective_temporal_rank": 32,
+          "low_temporal_rank": false,
+          "si_normalizer_roundtrips": [
+            {
+              "frame_index": 0,
+              "passed": true,
+              "rtol": 4.76837158203125e-07,
+              "fluid_cell_count": 1166336,
+              "channels": {
+                "u": {
+                  "unit": "m/s",
+                  "atol": 1e-07,
+                  "max_abs_error": 8.940696716308594e-08,
+                  "cells_outside_tolerance": 0
+                },
+                "v": {
+                  "unit": "m/s",
+                  "atol": 1e-07,
+                  "max_abs_error": 5.960464477539063e-08,
+                  "cells_outside_tolerance": 0
+                },
+                "w": {
+                  "unit": "m/s",
+                  "atol": 1e-07,
+                  "max_abs_error": 1.4901161193847656e-08,
+                  "cells_outside_tolerance": 0
+                },
+                "p": {
+                  "unit": "Pa",
+                  "atol": 1e-05,
+                  "max_abs_error": 6.103515625e-05,
+                  "cells_outside_tolerance": 0
+                }
+              }
+            },
+            {
+              "frame_index": 49,
+              "passed": true,
+              "rtol": 4.76837158203125e-07,
+              "fluid_cell_count": 1166336,
+              "channels": {
+                "u": {
+                  "unit": "m/s",
+                  "atol": 1e-07,
+                  "max_abs_error": 8.940696716308594e-08,
+                  "cells_outside_tolerance": 0
+                },
+                "v": {
+                  "unit": "m/s",
+                  "atol": 1e-07,
+                  "max_abs_error": 5.960464477539063e-08,
+                  "cells_outside_tolerance": 0
+                },
+                "w": {
+                  "unit": "m/s",
+                  "atol": 1e-07,
+                  "max_abs_error": 1.4901161193847656e-08,
+                  "cells_outside_tolerance": 0
+                },
+                "p": {
+                  "unit": "Pa",
+                  "atol": 1e-05,
+                  "max_abs_error": 6.103515625e-05,
+                  "cells_outside_tolerance": 0
+                }
+              }
+            }
+          ],
+          "spacing_m": [
+            0.018749999621557812,
+            0.018750001254834628,
+            0.018749999750347038
+          ],
+          "spacing_star": [
+            0.06249999873852604,
+            0.06250000418278209,
+            0.062499999167823464
+          ],
+          "field_units": [
+            "m/s",
+            "m/s",
+            "m/s",
+            "Pa"
+          ],
+          "dt_phys_mean_s": 0.04099997695611448,
+          "dt_ctu_mean": 0.10832198785275829,
+          "t_start_s": 25.666000366210938,
+          "t_end_s": 27.674999237060547,
+          "ancestor_id": "e:/codex_comsol_takeover/20261113/cpu_fill/results/re200k_mesh1_pilot/b2_rtol5e4_max005/b2_rtol5e4_max005.mph",
+          "tier1_stability_passed": false,
           "max_rollout_from_L4": 46,
-          "dt_phys_mean_s": 0.041,
-          "dt_ctu_mean": 0.108322,
+          "path": "/root/autodl-tmp/datasets/world_model/re200k_wm_50steps.h5",
+          "status": "ELIGIBLE",
           "raw_h5_channels": [
             "u_star",
             "v_cross_star",
@@ -325,8 +595,41 @@
             "solid_mask"
           ],
           "requires_ch4_ch5_swap_and_mask_flip": true,
-          "tier1_limit_cycle_status": "UNSTABLE",
-          "status": "ELIGIBLE"
+          "g3_window_support": {
+            "history_frames": 4,
+            "horizons": [
+              {
+                "forecast_frames": 10,
+                "available_starts": 37,
+                "forecast_duration_ctu": 1.0832198785275828,
+                "dft_delta_st": 0.9231736047526165
+              },
+              {
+                "forecast_frames": 20,
+                "available_starts": 27,
+                "forecast_duration_ctu": 2.1664397570551657,
+                "dft_delta_st": 0.4615868023763082
+              },
+              {
+                "forecast_frames": 45,
+                "available_starts": 2,
+                "forecast_duration_ctu": 4.874489453374123,
+                "dft_delta_st": 0.2051496899450259
+              },
+              {
+                "forecast_frames": 50,
+                "available_starts": 0,
+                "forecast_duration_ctu": null,
+                "dft_delta_st": null
+              },
+              {
+                "forecast_frames": 100,
+                "available_starts": 0,
+                "forecast_duration_ctu": null,
+                "dft_delta_st": null
+              }
+            ]
+          }
         },
         {
           "case_id": "re350k_wm_50steps",
@@ -334,9 +637,122 @@
           "reynolds_number": 349999.99999999994,
           "u0_m_s": 1.38705,
           "num_steps": 50,
+          "file_exists_on_disk": true,
+          "tier1_limit_cycle_status": "UNSTABLE",
+          "tensor_key": "flow_fields",
+          "first_frame_boundary_diagnostics": {
+            "first_shell_cell_count": 3072,
+            "first_shell_normal_speed_rms": 0.1516552851749139,
+            "first_shell_tangential_speed_rms": 1.3562412114362192,
+            "first_shell_total_speed_rms": 1.3646939397240203,
+            "solid_interior_max_abs": 0.0,
+            "roi_flux_method": "nearest_cell_center_velocity_times_face_area; outward_positive",
+            "roi_x_min_mean_u_m_s": 1.3516568685493742,
+            "roi_x_max_mean_u_m_s": 1.3647327809012495,
+            "roi_face_reference_errors": null,
+            "roi_face_flux_m3_s": {
+              "x_min": -2.919578972530475,
+              "x_max": 2.947822944530675,
+              "y_min": -0.0015752357530940716,
+              "y_max": -0.002879288382937353,
+              "z_min": -0.00519911307656608,
+              "z_max": -0.019158685433801066
+            },
+            "roi_net_outward_flux_m3_s": -0.000568350646198447
+          },
+          "effective_temporal_rank": 30,
+          "low_temporal_rank": false,
+          "si_normalizer_roundtrips": [
+            {
+              "frame_index": 0,
+              "passed": true,
+              "rtol": 4.76837158203125e-07,
+              "fluid_cell_count": 1166336,
+              "channels": {
+                "u": {
+                  "unit": "m/s",
+                  "atol": 1e-07,
+                  "max_abs_error": 1.7881393432617188e-07,
+                  "cells_outside_tolerance": 0
+                },
+                "v": {
+                  "unit": "m/s",
+                  "atol": 1e-07,
+                  "max_abs_error": 1.1920928955078125e-07,
+                  "cells_outside_tolerance": 0
+                },
+                "w": {
+                  "unit": "m/s",
+                  "atol": 1e-07,
+                  "max_abs_error": 5.960464477539063e-08,
+                  "cells_outside_tolerance": 0
+                },
+                "p": {
+                  "unit": "Pa",
+                  "atol": 1e-05,
+                  "max_abs_error": 0.0001220703125,
+                  "cells_outside_tolerance": 0
+                }
+              }
+            },
+            {
+              "frame_index": 49,
+              "passed": true,
+              "rtol": 4.76837158203125e-07,
+              "fluid_cell_count": 1166336,
+              "channels": {
+                "u": {
+                  "unit": "m/s",
+                  "atol": 1e-07,
+                  "max_abs_error": 1.7881393432617188e-07,
+                  "cells_outside_tolerance": 0
+                },
+                "v": {
+                  "unit": "m/s",
+                  "atol": 1e-07,
+                  "max_abs_error": 1.1920928955078125e-07,
+                  "cells_outside_tolerance": 0
+                },
+                "w": {
+                  "unit": "m/s",
+                  "atol": 1e-07,
+                  "max_abs_error": 5.960464477539063e-08,
+                  "cells_outside_tolerance": 0
+                },
+                "p": {
+                  "unit": "Pa",
+                  "atol": 1e-05,
+                  "max_abs_error": 0.0001220703125,
+                  "cells_outside_tolerance": 0
+                }
+              }
+            }
+          ],
+          "spacing_m": [
+            0.018749999621557812,
+            0.018750001254834628,
+            0.018749999750347038
+          ],
+          "spacing_star": [
+            0.06249999873852604,
+            0.06250000418278209,
+            0.062499999167823464
+          ],
+          "field_units": [
+            "m/s",
+            "m/s",
+            "m/s",
+            "Pa"
+          ],
+          "dt_phys_mean_s": 0.019999990657884246,
+          "dt_ctu_mean": 0.0924699744399713,
+          "t_start_s": 24.020000457763672,
+          "t_end_s": 25.0,
+          "ancestor_id": "e:/codex_comsol_takeover/20261113/cpu_fill/results/re350k_mesh1_pilot/b2_rtol5e4_max005/b2_rtol5e4_max005.mph",
+          "tier1_stability_passed": false,
           "max_rollout_from_L4": 46,
-          "dt_phys_mean_s": 0.02,
-          "dt_ctu_mean": 0.09247,
+          "path": "/root/autodl-tmp/datasets/world_model/re350k_wm_50steps.h5",
+          "status": "ELIGIBLE",
           "raw_h5_channels": [
             "u_star",
             "v_cross_star",
@@ -346,10 +762,46 @@
             "solid_mask"
           ],
           "requires_ch4_ch5_swap_and_mask_flip": true,
-          "tier1_limit_cycle_status": "UNSTABLE",
-          "status": "ELIGIBLE"
+          "g3_window_support": {
+            "history_frames": 4,
+            "horizons": [
+              {
+                "forecast_frames": 10,
+                "available_starts": 37,
+                "forecast_duration_ctu": 0.924699744399713,
+                "dft_delta_st": 1.0814321146473005
+              },
+              {
+                "forecast_frames": 20,
+                "available_starts": 27,
+                "forecast_duration_ctu": 1.849399488799426,
+                "dft_delta_st": 0.5407160573236502
+              },
+              {
+                "forecast_frames": 45,
+                "available_starts": 2,
+                "forecast_duration_ctu": 4.161148849798709,
+                "dft_delta_st": 0.24031824769940013
+              },
+              {
+                "forecast_frames": 50,
+                "available_starts": 0,
+                "forecast_duration_ctu": null,
+                "dft_delta_st": null
+              },
+              {
+                "forecast_frames": 100,
+                "available_starts": 0,
+                "forecast_duration_ctu": null,
+                "dft_delta_st": null
+              }
+            ]
+          }
         }
       ],
+      "unverified_count": 0,
+      "unverified_trajectories": [],
+      "quarantined_count": 2,
       "quarantined_trajectories": [
         {
           "case_id": "re180k_mesh1_pilot",
@@ -362,29 +814,23 @@
           "reynolds_number": 126167.0,
           "u0_m_s": 0.5,
           "num_steps": 25,
-          "max_rollout_from_L4": 21,
-          "dt_phys_mean_s": 0.06,
-          "dt_ctu_mean": 0.1,
-          "raw_h5_channels": [
-            "u_star",
-            "v_cross_star",
-            "w_span_star",
-            "p_star",
-            "sdf_star",
-            "solid_mask"
-          ],
-          "requires_ch4_ch5_swap_and_mask_flip": true,
-          "tier1_limit_cycle_status": "UNSTABLE",
+          "file_exists_on_disk": true,
+          "status": "QUARANTINED",
           "quarantine_reasons": [
-            "ground_truth_verified is False in manifest.json",
-            "ground_truth_warning: h5_attrs(Re=126167.0,U0=0.5) != source_model summary (Re=5001.3,U0=0.01982) at E:\\codex_comsol_takeover\\20261113\\cpu_fill\\results\\re5k_mesh1_pilot\\B2_rtol5e4_max005",
-            "RAM-pool audit flagged synthetic rank-2 interpolation: c04_wm_25steps_golden.h5 (bit-exact match max_diff=0.0; synthetic rank-2 interpolation of slots 0..1)"
-          ],
-          "status": "QUARANTINED"
+            "unverified ground truth: h5_attrs(Re=126167.0,U0=0.5) != source_model summary (Re=5001.3,U0=0.01982) at E:\\codex_comsol_takeover\\20261113\\cpu_fill\\results\\re5k_mesh1_pilot\\B2_rtol5e4_max005; RAM-pool audit: c04_wm_25steps_golden.h5 (bit-exact match max_diff=0.0; synthetic rank-2 interpolation of slots 0..1)"
+          ]
         }
       ],
+      "required_candidate_failure_count": 0,
+      "intervention_pairs": {
+        "history_frames": 4,
+        "available_pair_count": 0,
+        "available_pairs": [],
+        "unmatched_pairs": []
+      },
+      "tier1_passed_trajectory_count": 0,
       "max_supported_rollout_horizon_from_L4": 46,
-      "h100_rollout_status": "BLOCKED_BY_50_STEP_TRAJECTORY_LENGTH (requires >=104 contiguous steps)"
+      "h100_rollout_status": "INSUFFICIENT_VERIFIED_FRAMES"
     }
   }
 }

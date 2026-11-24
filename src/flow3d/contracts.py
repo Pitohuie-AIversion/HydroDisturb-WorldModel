@@ -10,6 +10,33 @@ class PhysicsContractError(ValueError):
     """Raised when physical parameters, tensor layouts, or provenance violate G0 contracts."""
 
 
+def condition_cadence(row: Mapping[str, Any], key: str, *, required: bool = False) -> float | None:
+    """Resolve one forecast timestep from inference-known quantities in its own units."""
+    if key not in ("dt_phys_s", "dt_ctu"):
+        raise ValueError(f"unknown cadence field: {key}")
+    known, valid = row.get("known_mask", {}), row.get("valid_mask", {})
+
+    def available(name):
+        return known.get(name, True) is True and valid.get(name, True) is True
+
+    value = row.get(key) if available(key) else None
+    if value is None and key == "dt_ctu" and available(key):
+        factors = ("dt_phys_s", "u0_m_s", "diameter_m")
+        if all(available(name) and row.get(name) is not None for name in factors):
+            seconds, speed, diameter = (float(row[name]) for name in factors)
+            if diameter <= 0 or not np.isfinite(diameter) or seconds <= 0:
+                raise PhysicsContractError("invalid physical inputs for dt_ctu")
+            value = seconds * abs(speed) / diameter
+    if value is None:
+        if required:
+            raise PhysicsContractError(f"forecast requires a known, valid {key}")
+        return None
+    value = float(value)
+    if not np.isfinite(value) or value <= 0:
+        raise PhysicsContractError(f"{key} must be finite and positive")
+    return value
+
+
 @dataclass(frozen=True)
 class StateSpec3D:
     """State specification for 3D flow fields stored in (Z, Y, X) order."""
@@ -35,6 +62,8 @@ class StateSpec3D:
             raise PhysicsContractError("default_grid_size must contain 3 positive integers (Z, Y, X)")
         if len(self.default_spacing_m) != 3 or any(h <= 0 for h in self.default_spacing_m):
             raise PhysicsContractError("default_spacing_m must contain 3 positive floats (dz, dy, dx)")
+        if not np.isfinite(self.cylinder_diameter_m) or self.cylinder_diameter_m <= 0:
+            raise PhysicsContractError("cylinder_diameter_m must be positive and finite")
 
 
 CYLINDER3D_STATE_SPEC = StateSpec3D(name="cylinder_wake_3d_c04")
@@ -65,10 +94,10 @@ class SampleProvenance:
     time_idx: int = 0
     time_phys_s: float = 0.0
     time_ctu: float = 0.0
-    ground_truth_verified: bool = True
-    tier1_stability_status: str = "VERIFIED"
-    pressure_gauge: str = "outlet_zero_mean_pa"
-    boundary_condition_id: str = "inflow_dirichlet_outflow_pressure_cylinder_noslip_span_symmetric"
+    ground_truth_verified: bool = False
+    tier1_stability_status: str = "UNKNOWN"
+    pressure_gauge: str = "unspecified_solver_pressure_reference"
+    boundary_condition_id: str = "unspecified_solver_boundary_conditions"
 
     def __post_init__(self) -> None:
         for attr in ("case_id", "geometry_id", "trajectory_id", "ancestor_id", "segment_id"):
@@ -77,6 +106,8 @@ class SampleProvenance:
                 raise PhysicsContractError(f"provenance field '{attr}' must be a non-empty string")
         if not np.isfinite(self.time_phys_s) or not np.isfinite(self.time_ctu):
             raise PhysicsContractError("time_phys_s and time_ctu must be finite floats")
+        if not isinstance(self.ground_truth_verified, (bool, np.bool_)):
+            raise PhysicsContractError("ground_truth_verified must be a boolean")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -105,11 +136,11 @@ class SampleProvenance:
             time_idx=int(raw.get("time_idx", 0)),
             time_phys_s=float(raw.get("time_phys_s", 0.0)),
             time_ctu=float(raw.get("time_ctu", 0.0)),
-            ground_truth_verified=bool(raw.get("ground_truth_verified", True)),
-            tier1_stability_status=str(raw.get("tier1_stability_status", "VERIFIED")),
-            pressure_gauge=str(raw.get("pressure_gauge", "outlet_zero_mean_pa")),
+            ground_truth_verified=raw.get("ground_truth_verified", False),
+            tier1_stability_status=str(raw.get("tier1_stability_status", "UNKNOWN")),
+            pressure_gauge=str(raw.get("pressure_gauge", "unspecified_solver_pressure_reference")),
             boundary_condition_id=str(
-                raw.get("boundary_condition_id", "inflow_dirichlet_outflow_pressure_cylinder_noslip_span_symmetric")
+                raw.get("boundary_condition_id", "unspecified_solver_boundary_conditions")
             ),
         )
 
@@ -141,8 +172,8 @@ class Flow3DConditions:
                 raise PhysicsContractError(f"future-leakage condition keys are forbidden: {sorted(forbidden)}")
         if "future" in self.history_regime_hint.lower():
             raise PhysicsContractError("e_regime / history_regime_hint must be inferred strictly from history")
-        if self.diameter_m <= 0:
-            raise PhysicsContractError("diameter_m must be positive")
+        if self.diameter_m <= 0 or not np.isfinite(self.diameter_m):
+            raise PhysicsContractError("diameter_m must be positive and finite")
         if self.dt_phys_s <= 0 or not np.isfinite(self.dt_phys_s):
             raise PhysicsContractError("dt_phys_s must be a positive finite float")
 
@@ -176,15 +207,11 @@ class Flow3DConditions:
                     )
 
     @property
-    def resolved_dt_ctu(self) -> float:
-        if self.dt_ctu is not None:
-            return float(self.dt_ctu)
-        if self.u0_m_s is not None and self.diameter_m > 0:
-            return float(self.dt_phys_s * abs(self.u0_m_s) / self.diameter_m)
-        return float(self.dt_phys_s)
+    def resolved_dt_ctu(self) -> float | None:
+        return condition_cadence(vars(self), "dt_ctu")
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "reynolds_number": self.reynolds_number,
             "u0_m_s": self.u0_m_s,
             "diameter_m": self.diameter_m,
@@ -197,11 +224,22 @@ class Flow3DConditions:
             "known_mask": dict(self.known_mask),
             "valid_mask": dict(self.valid_mask),
         }
+        if self.known_mask.get("action_schedule"):
+            data["extra_metadata"] = {
+                key: self.extra_metadata[key]
+                for key in ("action_channel", "action_unit", "action_times_s", "action_known_at_time_s", "exogenous")
+                if key in self.extra_metadata
+            }
+        return data
 
 
 @dataclass(frozen=True)
 class Flow3DBatch:
-    """Validated 3D flow-field batch following [B, T, 4, Z, Y, X] and geometry [B, 2, Z, Y, X]."""
+    """SI fields [B,T,4,Z,Y,X] in m/s and Pa, per-frame SI stats, and (dz,dy,dx) in metres.
+
+    The geometry channels are dimensionless (fluid mask, SDF/D). Physical diagnostics
+    use spacing directly; normalized-field physics heads use spacing_over_d().
+    """
 
     field: np.ndarray
     geometry: np.ndarray
@@ -210,6 +248,14 @@ class Flow3DBatch:
     state_spec: StateSpec3D = CYLINDER3D_STATE_SPEC
     conditions: Sequence[Flow3DConditions] = ()
     provenance: Sequence[SampleProvenance] = ()
+
+    def spacing_over_d(self, batch_index: int = 0) -> tuple[float, float, float]:
+        """Return normalized-grid spacing for the example's cylinder diameter."""
+        if not 0 <= batch_index < self.field.shape[0]:
+            raise IndexError("batch_index out of range")
+        diameter = self.conditions[batch_index].diameter_m if self.conditions else self.state_spec.cylinder_diameter_m
+        dz, dy, dx = self.spacing
+        return dz / diameter, dy / diameter, dx / diameter
 
     def __post_init__(self) -> None:
         f = np.asarray(self.field)
@@ -225,6 +271,8 @@ class Flow3DBatch:
             )
         if len(self.spacing) != 3 or any(h <= 0 or not np.isfinite(h) for h in self.spacing):
             raise PhysicsContractError(f"spacing (dz, dy, dx) must be 3 positive finite floats, got {self.spacing}")
+        if self.conditions and len(self.conditions) != bsz:
+            raise PhysicsContractError("conditions must contain one entry per batch item")
         if not np.all(np.isfinite(g)):
             raise PhysicsContractError("geometry tensor [fluid_mask, sdf_over_d] contains non-finite values")
         fluid_mask = g[:, 0] > 0.5
@@ -232,9 +280,9 @@ class Flow3DBatch:
             if int(fluid_mask[b_idx].sum()) == 0:
                 raise PhysicsContractError(f"batch item {b_idx} has zero valid fluid cells")
             # Fluid cells must be strictly finite across all time steps and channels
-            fluid_slice = f[b_idx][:, :, fluid_mask[b_idx]]
-            if not np.all(np.isfinite(fluid_slice)):
-                raise PhysicsContractError(f"batch item {b_idx} contains NaN/Inf inside the valid fluid domain")
+            for frame in f[b_idx]:
+                if not np.isfinite(frame[:, fluid_mask[b_idx]]).all():
+                    raise PhysicsContractError(f"batch item {b_idx} contains NaN/Inf inside the valid fluid domain")
         if self.b is not None:
             b_arr = np.asarray(self.b)
             if b_arr.shape != (bsz, t_len, 6):

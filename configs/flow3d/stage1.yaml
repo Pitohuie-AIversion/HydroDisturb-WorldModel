@@ -1,0 +1,129 @@
+schema_version: flow3d.stage1.v1
+normalizer_version: normalizer.flow3d.si.v2
+latent_contract_version: latent.flow3d.v2
+
+grid:
+  spatial_shape_zyx: [64, 96, 192]
+  spacing_zyx: [0.0625, 0.0625, 0.0625]  # dimensionless h* = dx / D = 1/16 default for loss calibration
+  spacing_zyx_m: [0.01875, 0.01875, 0.01875]  # physical C04 cell spacing in meters (per-batch override)
+  cylinder_diameter_m: 0.3
+
+normalizer:
+  scale_floor_uvw: 0.000001
+  scale_floor_p: 0.000001
+
+encoder:
+  in_channels: 6
+  base_channels: 32
+  channel_mults: [1, 2, 4, 8]
+  latent_channels: 256
+  downsample_factor: 8
+  gn_groups: 8
+  use_s2c: true
+  multiscale_geometry: true
+  sdf_tanh_alpha: 1.0
+  num_refine_blocks: 1
+
+spatial_transformer:
+  depth: 1
+  embed_dim: 256
+  num_heads: 8
+  mlp_dim: 1024
+  dropout: 0.0
+  pre_ln: true
+  output_norm: "none"  # latent_norm controls bottleneck scaling after the residual stream
+  pos_encoding: sincos3d
+  use_sdpa: true
+  temporal_attention: false
+
+latent_norm:
+  type: group_norm
+  available_modes: [group_norm, dataset_rms, affine_free_rmsnorm]
+  num_groups: 32
+  dataset_rms_scale: 1.0
+  eps: 0.000001
+
+decoder:
+  no_encoder_skip: true
+  use_c2s: true
+  base_channels: 32
+  channel_mults: [1, 2, 4, 8]
+  geometry_channels: 2
+  gn_groups: 8
+  multiscale_geometry: true
+  sdf_tanh_alpha: 1.0
+  num_refine_blocks: 1
+  up3_num_refine_blocks: 1
+  hard_mask_output: true
+
+head:
+  type: head_a
+  available_types: [head_a, head_b]
+  helmholtz_projection: false
+  helmholtz_iters: 8
+  helmholtz_omega: 0.8
+  helmholtz_method: jacobi
+  separate_mean_potential: true
+  use_potential_branch: false
+
+probe:
+  enabled: false
+  hidden_dim: 256
+  spectrum_bins: 16
+
+loss:
+  reconstruction_weight: 1.0
+  pressure_weight: 1.0
+  divergence_weight: 0.0
+  vorticity_weight: 0.0
+  coulomb_gauge_weight: 0.01
+  harmonic_laplacian_weight: 0.01
+  stat_consistency_weight: 0.0
+
+runtime:
+  num_gpus: auto
+  strategy: auto
+  available_strategies: [auto, single_gpu, data_parallel, ddp, worker_pool]
+  per_gpu_batch_size: 1
+  scale_batch_linearly_with_n: true
+  maximize_all_resources: true
+  cpu_threads: auto
+  dataloader_workers_per_gpu: auto
+  pin_memory: true
+  non_blocking: true
+  persistent_workers: true
+  train_include_phys_field: false  # Physical-unit targets are needed for validation.
+  gather_trainer_outputs_only: false  # Multi-GPU profiles can restrict gathering to the fields used by the trainer.
+  prefetch_factor: 4
+  allow_tf32: false
+  cudnn_benchmark: false
+  amp_dtype: bf16
+
+training:
+  tensorboard: true
+  min_epochs: 60
+  max_epochs: 250
+  scheduler: warmup_plateau
+  warmup_epochs: 8
+  warmup_start_lr: 0.00001
+  learning_rate: 0.0002
+  plateau_factor: 0.5
+  plateau_patience: 12
+  plateau_threshold: 0.001
+  min_lr: 0.000005
+  early_stop_patience: 30
+  early_stop_threshold: 0.005
+  ema: true
+  ema_decay: 0.995
+  weight_decay: 0.0001
+  betas: [0.9, 0.95]
+  clip_grad_norm: 1.0
+  eval_interval: 1
+  save_interval: 10
+  save_dir: checkpoints/stage1
+  split_strategy: temporal_block
+  purge_gap_frames: 4
+  train_ratio: 0.7
+  val_ratio: 0.15
+  test_ratio: 0.15
+  amp_dtype: bf16

@@ -12,16 +12,23 @@ that need either dependency fail with a clear error when it is not installed.
 
 from __future__ import annotations
 
-import copy
 import datetime as _dt
+import errno
 import hashlib
+import io
 import json
 import os
 import random
+import shutil
 import tempfile
+from collections import OrderedDict
 from dataclasses import asdict, dataclass, field, is_dataclass
 from pathlib import Path
-from typing import Any, Mapping, MutableMapping, Sequence
+from string import hexdigits
+from typing import Any, Callable, Mapping
+
+from .manifest import hash_cache_index
+
 
 try:  # Optional for tooling that only needs contracts/manifests.
     import numpy as np
@@ -35,7 +42,7 @@ except Exception:  # pragma: no cover - exercised only without torch installed
 
 
 FORMAT_VERSION = 2
-MANIFEST_VERSION = 1
+MANIFEST_VERSION = 2
 
 
 class CheckpointError(RuntimeError):
@@ -278,7 +285,7 @@ def _atomic_write_bytes(data: bytes, destination: Path) -> None:
             pass
 
 
-def _atomic_torch_save(payload: Mapping[str, Any], destination: Path) -> None:
+def _atomic_torch_save(payload: Mapping[str, Any], destination: Path) -> tuple[Path, str]:
     t = _require_torch()
     destination.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(
@@ -289,8 +296,18 @@ def _atomic_torch_save(payload: Mapping[str, Any], destination: Path) -> None:
             t.save(dict(payload), stream)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, destination)
+        digest = sha256_file(temporary)
+        # Keep the traditional epoch/step name for its first publisher. Duplicate
+        # steps (including concurrent saves) get an immutable content address.
+        try:
+            os.link(temporary, destination)
+        except OSError as exc:
+            if exc.errno not in (errno.EEXIST, errno.EPERM, errno.ENOTSUP, errno.ENOSYS):
+                raise
+            destination = destination.with_name(f"{destination.stem}_{digest}{destination.suffix}")
+            os.replace(temporary, destination)
         _fsync_directory(destination.parent)
+        return destination, digest
     finally:
         try:
             os.unlink(temporary)
@@ -298,14 +315,78 @@ def _atomic_torch_save(payload: Mapping[str, Any], destination: Path) -> None:
             pass
 
 
-def _safe_torch_load(path: Path, map_location: Any = "cpu") -> dict[str, Any]:
+_NUMPY_STATE_TAG = "__stage1_numpy_state_v1__"
+
+
+def _pack_data_state(value: Any) -> Any:
+    """Keep sampler state readable by weights_only on every supported Torch version."""
+    if np is not None and isinstance(value, (np.ndarray, np.generic)):
+        if value.dtype.hasobject:
+            raise CheckpointStateError("sampler/dataloader NumPy object dtype cannot be safely restored")
+        if np.ma.isMaskedArray(value):
+            raise CheckpointStateError("store the masked sampler array and its mask separately")
+        buffer = io.BytesIO()
+        np.save(buffer, value, allow_pickle=False)
+        kind = "scalar" if isinstance(value, np.generic) else "array"
+        return {_NUMPY_STATE_TAG: kind, "data": buffer.getvalue()}
+    if type(value) in (dict, OrderedDict):
+        # A caller's dictionary can itself contain the tag, or a NumPy scalar
+        # key. Store pairs in that case so both keys and values round-trip.
+        simple_keys = (str, int, float, bool, bytes, type(None))
+        if type(value) is OrderedDict or _NUMPY_STATE_TAG in value or any(type(k) not in simple_keys for k in value):
+            pairs = [(_pack_data_state(k), _pack_data_state(v)) for k, v in value.items()]
+            kind = "ordered_mapping" if type(value) is OrderedDict else "mapping"
+            return {_NUMPY_STATE_TAG: kind, "data": pairs}
+        return {k: _pack_data_state(v) for k, v in value.items()}
+    if type(value) in (list, tuple):
+        items = [_pack_data_state(v) for v in value]
+        return tuple(items) if isinstance(value, tuple) else items
+    if value is None or type(value) in (str, bytes, int, float, bool):
+        return value
     t = _require_torch()
+    if type(value) is t.Tensor:
+        return value.clone()
+    # Preserve less common native Torch state types (e.g. Size or device)
+    # exactly when this version's weights-only loader supports them.
+    buffer = io.BytesIO()
     try:
-        payload = t.load(path, map_location=map_location, weights_only=True)
-    except TypeError:  # Older PyTorch versions do not expose ``weights_only``.
-        payload = t.load(path, map_location=map_location)
+        t.save(value, buffer)
+        buffer.seek(0)
+        return t.load(buffer, weights_only=True)
+    except Exception as exc:
+        raise CheckpointStateError(f"unsupported sampler/dataloader state type {type(value).__name__}") from exc
+
+
+def _unpack_data_state(value: Any) -> Any:
+    if isinstance(value, dict):
+        if _NUMPY_STATE_TAG not in value:
+            return {k: _unpack_data_state(v) for k, v in value.items()}
+        kind = value[_NUMPY_STATE_TAG]
+        if kind in ("mapping", "ordered_mapping"):
+            cls = OrderedDict if kind == "ordered_mapping" else dict
+            return cls((_unpack_data_state(k), _unpack_data_state(v)) for k, v in value["data"])
+        if kind not in ("array", "scalar"):
+            raise CheckpointStateError(f"unknown sampler/dataloader state tag {kind!r}")
+        if np is None:
+            raise CheckpointDependencyError("NumPy is required to restore NumPy sampler/dataloader state")
+        raw = value["data"]
+        arr = np.load(io.BytesIO(raw), allow_pickle=False, max_header_size=len(raw))
+        return arr[()] if kind == "scalar" else arr
+    if type(value) in (list, tuple):
+        items = [_unpack_data_state(v) for v in value]
+        return tuple(items) if isinstance(value, tuple) else items
+    return value
+
+
+def _safe_torch_load(path: Path, map_location: Any = "cpu") -> dict[str, Any]:
+    payload = _require_torch().load(path, map_location=map_location, weights_only=True)
     if not isinstance(payload, dict):
         raise CheckpointError(f"checkpoint {path} does not contain a mapping payload")
+    if "data_state_format" in payload:
+        if payload["data_state_format"] != 1:
+            raise CheckpointStateError("unsupported sampler/dataloader state encoding")
+        for key in ("sampler_state", "dataloader_state"):
+            payload[key] = _unpack_data_state(payload[key])
     return payload
 
 
@@ -361,6 +442,7 @@ class CheckpointManager:
         dataloader_state: Any | None = None,
         extra_state: Mapping[str, Any] | None = None,
         include_rng: bool = True,
+        ema_state_dict: Mapping[str, Any] | None = None,
     ) -> Path:
         """Publish a complete resume checkpoint and optionally update ``best``.
 
@@ -389,6 +471,7 @@ class CheckpointManager:
             "epoch": int(epoch),
             "global_step": int(global_step),
             "model_state_dict": model.state_dict(),
+            "ema_state_dict": ema_state_dict,
             "optimizer_state_dict": optimizer.state_dict() if optimizer is not None else None,
             "scheduler_state_dict": scheduler.state_dict() if scheduler is not None else None,
             "scaler_state_dict": scaler.state_dict() if scaler is not None else None,
@@ -398,8 +481,9 @@ class CheckpointManager:
                 "scaler": scaler is not None,
             },
             "rng_state": capture_rng_state() if include_rng else None,
-            "sampler_state": copy.deepcopy(sampler_state),
-            "dataloader_state": copy.deepcopy(dataloader_state),
+            "data_state_format": 1,
+            "sampler_state": _pack_data_state(sampler_state),
+            "dataloader_state": _pack_data_state(dataloader_state),
             "extra_state": _jsonable(dict(extra_state or {})),
             "config": config_value,
             "config_sha256": sha256_json(config_value),
@@ -409,8 +493,7 @@ class CheckpointManager:
         }
 
         destination = self._make_filename(epoch, global_step)
-        _atomic_torch_save(payload, destination)
-        digest = sha256_file(destination)
+        destination, digest = _atomic_torch_save(payload, destination)
 
         if is_best:
             pointer = {
@@ -434,8 +517,8 @@ class CheckpointManager:
             pointer_path = self.best_pointer_path
         else:
             candidate = Path(checkpoint)
-            if candidate == self.best_pointer_path or candidate.name == self.best_pointer_path.name:
-                pointer_path = candidate if candidate.is_absolute() else self.save_dir / candidate
+            if candidate.name == self.best_pointer_path.name:
+                pointer_path = self.best_pointer_path if candidate.parent == Path(".") else candidate
             else:
                 if not candidate.is_absolute() and candidate.parent == Path("."):
                     candidate = self.save_dir / candidate
@@ -444,7 +527,7 @@ class CheckpointManager:
             raise FileNotFoundError(f"best checkpoint pointer not found: {pointer_path}")
         try:
             pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
-            target = self.save_dir / str(pointer["checkpoint"])
+            target = pointer_path.parent / str(pointer["checkpoint"])
             expected = str(pointer.get("sha256") or pointer["checkpoint_sha256"])
         except (KeyError, TypeError, json.JSONDecodeError) as exc:
             raise CheckpointIntegrityError(f"invalid checkpoint pointer: {pointer_path}") from exc
@@ -456,6 +539,35 @@ class CheckpointManager:
                 f"checkpoint hash mismatch for {target}: expected {expected}, got {actual}"
             )
         return target, expected
+
+    def restore_best_pointer(self, path: Path, digest: str, contract_hash: str) -> None:
+        """Carry an immutable historical best into the directory of a resumed run."""
+        if self.best_pointer_path.is_file():
+            _, current_hash = self._resolve_path("best")
+            if current_hash == digest:
+                return
+        if sha256_file(path) != digest:
+            raise CheckpointIntegrityError(f"historical best checkpoint hash mismatch: {path}")
+        target = self.save_dir / path.name
+        if target.resolve() != path.resolve():
+            if target.exists() and sha256_file(target) != digest:
+                target = target.with_name(f"{target.stem}_{digest}{target.suffix}")
+            if not target.exists():
+                # A cross-filesystem fork must finish its copy before the pointer is published.
+                with tempfile.NamedTemporaryFile(dir=self.save_dir) as tmp:
+                    with path.open("rb") as src:
+                        shutil.copyfileobj(src, tmp)
+                    tmp.flush()
+                    os.fsync(tmp.fileno())
+                    os.link(tmp.name, target)
+            if sha256_file(target) != digest:
+                raise CheckpointIntegrityError(f"copied best checkpoint hash mismatch: {target}")
+        pointer = {
+            "pointer_version": 1, "model_name": self.model_name, "checkpoint": target.name,
+            "sha256": digest, "checkpoint_sha256": digest, "checkpoint_id": digest[:16],
+            "contract_sha256": contract_hash, "updated_at_utc": _utc_now(),
+        }
+        _atomic_write_bytes((canonical_json(pointer) + "\n").encode(), self.best_pointer_path)
 
     def verify_checkpoint(
         self,
@@ -497,6 +609,8 @@ class CheckpointManager:
         expected_config: Mapping[str, Any] | None = None,
         restore_rng: bool = True,
         map_location: Any = "cpu",
+        use_ema: bool = False,
+        validate_payload: Callable[[Mapping[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         """Load and strictly restore a checkpoint.
 
@@ -533,7 +647,10 @@ class CheckpointManager:
 
         if model is None or not hasattr(model, "load_state_dict"):
             raise TypeError("model must provide load_state_dict()")
-        model.load_state_dict(payload["model_state_dict"], strict=strict)
+        if validate_payload is not None:
+            validate_payload(payload)
+        weights = payload.get("ema_state_dict") if use_ema else None
+        model.load_state_dict(payload["model_state_dict"] if weights is None else weights, strict=strict)
 
         # Load the scheduler before optimizer so optimizer construction and
         # scheduler state are both present before training resumes.
@@ -555,45 +672,98 @@ class CheckpointManager:
                 raise CheckpointStateError("RNG state was requested but is absent")
             restore_rng_state(payload["rng_state"])
 
+        payload["loaded_path"] = str(path.resolve())
+        payload["loaded_sha256"] = digest
         return payload
+
+    def _frozen_identity(
+        self, checkpoint: str | os.PathLike[str], expected_contract: Any | None,
+        expected_hash: str | None = None,
+    ) -> tuple[Path, dict[str, str]]:
+        path, pointer_hash = self._resolve_path(checkpoint)
+        digest = sha256_file(path)
+        if (pointer_hash is not None and digest != pointer_hash) or (expected_hash is not None and digest != expected_hash):
+            raise CheckpointIntegrityError(f"checkpoint hash mismatch for {path}")
+        payload = _safe_torch_load(path)
+        if payload.get("format_version") != self.schema_version:
+            raise CheckpointContractError("unsupported checkpoint format")
+        contract = normalize_contract(payload.get("contract"))
+        contract_hash = sha256_json(contract)
+        if contract_hash != payload.get("contract_sha256"):
+            raise CheckpointIntegrityError("checkpoint contract does not match its stored hash")
+        expected = normalize_contract(expected_contract) if expected_contract is not None else (self.contract or None)
+        if expected is not None and sha256_json(expected) != contract_hash:
+            raise CheckpointContractError("frozen manifest checkpoint contract mismatch")
+        for key in ("latent_layout", "normalizer_version", "dataset_manifest_sha256"):
+            if not isinstance(contract.get(key), str) or not contract[key].strip():
+                raise CheckpointContractError(f"Stage 2 export requires checkpoint contract field {key}")
+        dataset_hash = contract["dataset_manifest_sha256"]
+        if len(dataset_hash) != 64 or any(c not in hexdigits for c in dataset_hash):
+            raise CheckpointContractError("dataset_manifest_sha256 must be a SHA-256 hex digest")
+        return path, {
+            "checkpoint_sha256": digest,
+            "checkpoint_id": digest[:16],
+            "contract_sha256": contract_hash,
+            "latent_source": "z_clean",
+            "latent_layout": contract["latent_layout"],
+            "normalizer_version": contract["normalizer_version"],
+            "dataset_manifest_sha256": dataset_hash,
+            "export_mode": "eval",
+        }
+
+    @staticmethod
+    def _cache_files(index: Path, identity: Mapping[str, str]) -> tuple[str, dict[str, str]]:
+        try:
+            return hash_cache_index(index, identity["checkpoint_sha256"], identity["contract_sha256"])
+        except (OSError, ValueError) as exc:
+            raise CheckpointIntegrityError(f"cannot verify cache index {index}: {exc}") from exc
 
     def create_frozen_manifest(
         self,
         checkpoint: str | os.PathLike[str],
         latent_source: str = "z_clean",
-        latent_layout: str = "B,T,C,Z,Y,X",
+        latent_layout: str | None = None,
         normalizer_version: str | None = None,
         dataset_manifest_sha256: str | None = None,
         export_mode: str = "eval",
         contract: Any | None = None,
         output_path: str | os.PathLike[str] | None = None,
+        *,
+        cache_index: str | os.PathLike[str],
     ) -> dict[str, Any]:
-        """Create a Stage 2 cache manifest bound to an immutable checkpoint."""
+        """Publish identities and file hashes for a completed z_clean export.
 
-        path, pointer_hash = self._resolve_path(checkpoint)
-        checkpoint_hash = sha256_file(path)
-        if pointer_hash is not None and checkpoint_hash != pointer_hash:
-            raise CheckpointIntegrityError(f"checkpoint hash mismatch for {path}")
-        payload = _safe_torch_load(path)
-        checkpoint_contract = payload.get("contract") or {}
-        contract_value = normalize_contract(contract) if contract is not None else normalize_contract(checkpoint_contract)
+        Relative cache_index paths are resolved from the output manifest directory
+        (save_dir for an in-memory manifest). Shards are relative to their index.
+        """
+        path, identity = self._frozen_identity(checkpoint, contract)
+        for key, supplied in {
+            "latent_source": latent_source, "latent_layout": latent_layout,
+            "normalizer_version": normalizer_version, "dataset_manifest_sha256": dataset_manifest_sha256,
+            "export_mode": export_mode,
+        }.items():
+            if supplied != identity[key] and (supplied is not None or key in ("latent_source", "export_mode")):
+                raise CheckpointContractError(f"frozen export {key} must match {identity[key]!r}")
+        output = self.save_dir / output_path if output_path is not None else None
+        root = (output.parent if output is not None else self.save_dir).resolve()
+        index = (root / cache_index).resolve()
+        if not index.is_relative_to(root):
+            raise CheckpointContractError("cache index must be under the manifest directory")
+        index_digest, shards = self._cache_files(index, identity)
         manifest = {
             "manifest_version": MANIFEST_VERSION,
             "checkpoint": path.name,
-            "checkpoint_sha256": checkpoint_hash,
-            "checkpoint_id": checkpoint_hash[:16],
-            "contract_sha256": sha256_json(contract_value),
-            "latent_source": str(latent_source),
-            "latent_layout": str(latent_layout),
-            "normalizer_version": normalizer_version,
-            "dataset_manifest_sha256": dataset_manifest_sha256,
-            "export_mode": str(export_mode),
+            **identity,
+            "cache_index": index.relative_to(root).as_posix(),
+            "cache_index_sha256": index_digest,
+            "shards_sha256": shards,
             "created_at_utc": _utc_now(),
         }
-        if output_path is not None:
-            output = Path(output_path)
-            if not output.is_absolute():
-                output = self.save_dir / output
+        if output is not None:
+            inputs = {path.resolve(), self.best_pointer_path.resolve(), index}
+            inputs.update((index.parent / name).resolve() for name in shards)
+            if output.resolve() in inputs:
+                raise CheckpointContractError("output manifest must be separate from the checkpoint, index and shards")
             _atomic_write_bytes((canonical_json(manifest) + "\n").encode("utf-8"), output)
         return manifest
 
@@ -602,39 +772,45 @@ class CheckpointManager:
         manifest: Mapping[str, Any] | str | os.PathLike[str],
         checkpoint: str | os.PathLike[str] | None = None,
         expected_contract: Any | None = None,
+        *,
+        cache_root: str | os.PathLike[str] | None = None,
     ) -> dict[str, Any]:
-        """Verify a frozen latent-cache manifest and its checkpoint identity."""
+        """Validate an export and return the verified index and ordered shard paths.
 
+        For an in-memory manifest, cache_root defaults to save_dir. For an on-disk
+        manifest, paths are always anchored to its directory.
+        """
         if isinstance(manifest, (str, os.PathLike)):
             manifest_path = Path(manifest)
             data = json.loads(manifest_path.read_text(encoding="utf-8"))
+            root = manifest_path.resolve().parent
         else:
             manifest_path = None
             data = dict(manifest)
-        if int(data.get("manifest_version", -1)) != MANIFEST_VERSION:
-            raise CheckpointContractError("unsupported frozen manifest version")
+            root = Path(cache_root if cache_root is not None else self.save_dir).resolve()
+        if not isinstance(data, dict) or data.get("manifest_version") != MANIFEST_VERSION:
+            raise CheckpointContractError("Stage 2 needs a v2 frozen manifest; re-export with a cache index")
         checkpoint_ref = checkpoint or data.get("checkpoint")
-        if checkpoint_ref is None:
+        if not checkpoint_ref:
             raise CheckpointIntegrityError("frozen manifest does not identify a checkpoint")
-        path, pointer_hash = self._resolve_path(checkpoint_ref)
-        actual_hash = sha256_file(path)
-        expected_hash = str(data.get("checkpoint_sha256", ""))
-        if actual_hash != expected_hash:
-            raise CheckpointIntegrityError(
-                f"frozen manifest hash mismatch: expected {expected_hash}, got {actual_hash}"
-            )
-        if pointer_hash is not None and pointer_hash != actual_hash:
-            raise CheckpointIntegrityError("best pointer hash does not match checkpoint")
-        payload = _safe_torch_load(path)
-        expected_contract_value = normalize_contract(expected_contract) if expected_contract is not None else None
-        contract_hash = str(data.get("contract_sha256", ""))
-        if expected_contract_value is not None and contract_hash != sha256_json(expected_contract_value):
-            raise CheckpointContractError("frozen manifest contract mismatch")
-        if payload.get("contract_sha256") != contract_hash:
-            raise CheckpointContractError("frozen manifest is bound to a different contract")
+        path, identity = self._frozen_identity(checkpoint_ref, expected_contract, str(data.get("checkpoint_sha256", "")))
+        for key, expected in identity.items():
+            if data.get(key) != expected:
+                raise CheckpointContractError(f"frozen manifest {key} mismatch")
+        index_name = data.get("cache_index")
+        if not isinstance(index_name, str) or not index_name or Path(index_name).is_absolute():
+            raise CheckpointIntegrityError("cache_index must be a relative path")
+        index = (root / index_name).resolve()
+        if not index.is_relative_to(root):
+            raise CheckpointIntegrityError("cache index is outside the manifest directory")
+        index_digest, shards = self._cache_files(index, identity)
+        if data.get("cache_index_sha256") != index_digest or data.get("shards_sha256") != shards:
+            raise CheckpointIntegrityError("cache index or shard hashes do not match the frozen manifest")
         if manifest_path is not None:
             data["manifest_path"] = str(manifest_path)
         data["checkpoint_path"] = str(path)
+        data["cache_index_path"] = str(index)
+        data["shard_paths"] = [str(index.parent / name) for name in shards]
         return data
 
 

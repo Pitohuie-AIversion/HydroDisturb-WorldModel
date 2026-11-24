@@ -8,6 +8,31 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
+def hash_cache_index(
+    index_path: Path, checkpoint_sha256: str, contract_sha256: str
+) -> tuple[str, dict[str, str]]:
+    """Hash the published JSON index and each shard it names, in index order."""
+    contents = index_path.read_bytes()
+    index = json.loads(contents)
+    shards = index.get("shards") if isinstance(index, dict) else None
+    if not isinstance(shards, list) or not shards:
+        raise ValueError("cache index must declare a nonempty 'shards' list")
+    if index.get("checkpoint_sha256") != checkpoint_sha256 or index.get("contract_sha256") != contract_sha256:
+        raise ValueError("cache index belongs to a different checkpoint or contract")
+    root = index_path.resolve().parent
+    hashes: dict[str, str] = {}
+    seen = {index_path.resolve()}
+    for name in shards:
+        if not isinstance(name, str) or not name or Path(name).is_absolute():
+            raise ValueError("cache shard names must be relative paths")
+        shard = (root / name).resolve()
+        if not shard.is_relative_to(root) or shard in seen:
+            raise ValueError(f"cache shard outside index directory or listed twice: {name}")
+        seen.add(shard)
+        hashes[name] = sha256_file(shard)
+    return hashlib.sha256(contents).hexdigest(), hashes
+
+
 def sha256_file(path: str | os.PathLike[str], chunk_size: int = 1024 * 1024) -> str:
     digest = hashlib.sha256()
     with open(path, "rb") as handle:
@@ -60,6 +85,7 @@ def validate_manifest(
     checkpoint_sha256: str,
     contract_sha256: str,
     latent_source: str = "z_clean",
+    latent_layout: str = "B,T,C,Z,Y,X",
     normalizer_version: str,
     dataset_manifest_sha256: str,
 ) -> None:
@@ -67,6 +93,7 @@ def validate_manifest(
         "checkpoint_sha256": checkpoint_sha256,
         "contract_sha256": contract_sha256,
         "latent_source": latent_source,
+        "latent_layout": latent_layout,
         "normalizer_version": normalizer_version,
         "dataset_manifest_sha256": dataset_manifest_sha256,
     }
